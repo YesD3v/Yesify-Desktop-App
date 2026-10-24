@@ -43,7 +43,12 @@ public partial class MainWindow : Window, IFrostSource
         _lyrics = new LyricsAnimator(vm, LyricsList, LyricsScroller);
         LyricsList.IsVisibleChanged += (_, _) => _lyrics.Refresh();
 
-        StateChanged += (_, _) => UpdateMaximizedState();
+        StateChanged += (_, _) => { UpdateMaximizedState(); RepaintAll(); };
+        Activated += (_, _) => RepaintAll();
+        IsVisibleChanged += (_, _) => RepaintAll();
+        Microsoft.Win32.SystemEvents.SessionSwitch += OnSystemWake;
+        Microsoft.Win32.SystemEvents.PowerModeChanged += OnSystemWake;
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnSystemWake;
         Vm.PropertyChanged += OnVmPropertyChanged;
         UpdateRightPanel();
         UpdateSidebarWidth();
@@ -62,10 +67,32 @@ public partial class MainWindow : Window, IFrostSource
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 
+    // After a long time in the background (or a fullscreen game taking the GPU), WPF can come back
+    // showing a stale frame and only repaint the bits that change, like a hovered button. Asking for a
+    // full repaint whenever the window comes back draws everything again.
+    // Unlocking, waking from sleep and screen changes, which can happen without the window being re-activated.
+    private void OnSystemWake(object? sender, EventArgs e) => Dispatcher.BeginInvoke(RepaintAll);
+
+    private void RepaintAll()
+    {
+        if (!IsVisible || WindowState == WindowState.Minimized) return;
+        Dispatcher.BeginInvoke(() =>
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+            if (hwnd != IntPtr.Zero) RedrawWindow(hwnd, IntPtr.Zero, IntPtr.Zero, 0x0001 | 0x0080 | 0x0100); // RDW_INVALIDATE | RDW_ALLCHILDREN | RDW_UPDATENOW
+        }, System.Windows.Threading.DispatcherPriority.Background);
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool RedrawWindow(IntPtr hwnd, IntPtr rect, IntPtr region, uint flags);
+
     protected override void OnClosed(EventArgs e)
     {
         // The view model lives on; unhook so it doesn't keep this window (and all its images) alive.
         Vm.PropertyChanged -= OnVmPropertyChanged;
+        Microsoft.Win32.SystemEvents.SessionSwitch -= OnSystemWake;
+        Microsoft.Win32.SystemEvents.PowerModeChanged -= OnSystemWake;
+        Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnSystemWake;
         _lyrics.Stop();
         DataContext = null;
         base.OnClosed(e);
