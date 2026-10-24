@@ -1,0 +1,7 @@
+bin/
+obj/
+publish/
+publish-update/
+.vs/
+*.user
+*.log

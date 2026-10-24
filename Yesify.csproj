@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <UseWPF>true</UseWPF>
+    <ApplicationIcon>yesify.ico</ApplicationIcon>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+  </PropertyGroup>
+
+  <!-- Keep the .NET runtime lean: Yesify spends most of its life playing audio in the tray. -->
+  <PropertyGroup>
+    <!-- No background GC thread or its extra heap reservations. -->
+    <ConcurrentGarbageCollection>false</ConcurrentGarbageCollection>
+    <!-- Skip profile-guided JIT instrumentation and runtime event tracing. -->
+    <TieredPGO>false</TieredPGO>
+    <EventSourceSupport>false</EventSourceSupport>
+    <!-- Precompiled code is mapped from the exe (shared, pageable) instead of JIT-compiled into private memory. -->
+    <PublishReadyToRun>true</PublishReadyToRun>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Have the GC compact more eagerly and hand memory back to Windows (0-9, higher = tighter). -->
+    <RuntimeHostConfigurationOption Include="System.GC.ConserveMemory" Value="7" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <PackageReference Include="YoutubeExplode" Version="6.6.2" />
+  </ItemGroup>
+
+</Project>
