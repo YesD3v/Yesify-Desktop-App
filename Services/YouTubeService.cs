@@ -43,6 +43,14 @@ public sealed class YouTubeService
     /// <summary>Returns a local audio file for the track, downloading it if needed.</summary>
     public async Task<string> GetAudioFileAsync(Track track, CancellationToken ct)
     {
+        // Songs removed from Spotify come back with no title and no artist. Searching for nothing finds
+        // some random video, so don't play them at all (this also drops wrong matches saved earlier).
+        if (track.SpotifyId != null && string.IsNullOrWhiteSpace(track.Title))
+        {
+            track.YouTubeId = null;
+            throw new InvalidOperationException("this song isn't available on Spotify anymore");
+        }
+
         if (track.YouTubeId == null)
         {
             // Share one search between "play now" and "prefetch" so they can't pick different videos.
@@ -172,7 +180,9 @@ public sealed class YouTubeService
             var found = await SearchVideosAsync($"{track.PrimaryArtist} - {title}", ct);
             scored.AddRange(found.Select((c, i) => (c, Score(c, i, track, title))));
         }
-        if (scored.Count == 0) throw new InvalidOperationException($"No YouTube results for \"{track.Artist} - {title}\".");
+        // A result with neither the title nor any of the artists is some other video, not this song.
+        scored.RemoveAll(x => !(title.Length > 0 && x.C.Title.Contains(title, StringComparison.OrdinalIgnoreCase)) && !ArtistMatches(x.C, track));
+        if (scored.Count == 0) throw new InvalidOperationException($"no YouTube results for \"{track.Artist} - {title}\"");
 
         var best = scored.OrderByDescending(x => x.Score).First().C.VideoId;
 

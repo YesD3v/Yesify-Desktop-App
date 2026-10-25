@@ -872,7 +872,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private async Task SkipBrokenTrackAsync(string reason)
     {
         var cts = _playCts;
-        StatusText = $"Couldn't play “{CurrentTrack?.Title}”: {reason}. Skipping.";
+        var name = string.IsNullOrWhiteSpace(CurrentTrack?.Title) ? "a song" : $"“{CurrentTrack.Title}”";
+        StatusText = $"Couldn't play {name}: {reason.TrimEnd('.')}. Skipping.";
         if (++_failures >= 5)
         {
             _player.Stop();
