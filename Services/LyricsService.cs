@@ -12,7 +12,8 @@ namespace Yesify.Services;
 /// radio edit or a video with an intro, has different timing):
 /// <list type="number">
 /// <item>NetEase Cloud Music's public lyrics, which time every word ("yrc"), for a perfect word-by-word sweep;</item>
-/// <item>LRCLIB (https://lrclib.net), a free open database, timed per line (word timing is then estimated);</item>
+/// <item>Lyrica (https://codeberg.org/willooper/Lyrica), an open API over LRCLIB, YouTube Music, Musixmatch and
+/// more, timed per line (word timing is then estimated);</item>
 /// <item>unsynced lyrics as a last resort.</item>
 /// </list>
 /// </summary>
@@ -35,20 +36,20 @@ public sealed partial class LyricsService
 
         // Ask both at once; either may be down or have nothing.
         var netEaseTask = Quietly(() => GetNetEaseAsync(track, duration, ct), (null, null, TimeSpan.MaxValue));
-        var lrclibTask = Quietly(() => GetLrclibAsync(track, duration, ct), []);
-        await Task.WhenAll(netEaseTask, lrclibTask);
+        var lyricaTask = Quietly(() => GetLyricaAsync(track, duration, ct), []);
+        await Task.WhenAll(netEaseTask, lyricaTask);
         ct.ThrowIfCancellationRequested();
         var (words, lines, lengthDiff) = netEaseTask.Result;
-        var lrclib = lrclibTask.Result;
-        var lrclibSynced = lrclib.Any(l => l.Time != null);
+        var lyrica = lyricaTask.Result;
+        var lyricaSynced = lyrica.Any(l => l.Time != null);
 
         // Word timing is unforgiving: only use it when NetEase's version is the same length as our audio
         // (within 1 s).
         if (words is { Count: > 0 } && lengthDiff <= TimeSpan.FromSeconds(1)) return words;
 
-        if (lrclibSynced) return lrclib;
+        if (lyricaSynced) return lyrica;
         if (lines is { Count: > 0 }) return lines; // line-timed beats unsynced
-        return lrclib;
+        return lyrica;
     }
 
     private static async Task<T> Quietly<T>(Func<Task<T>> work, T fallback)
@@ -58,43 +59,56 @@ public sealed partial class LyricsService
         catch { return fallback; }
     }
 
-    // ---------------------------------------------------------------- LRCLIB
+    // ---------------------------------------------------------------- Lyrica
 
-    private async Task<List<LyricLine>> GetLrclibAsync(Track track, TimeSpan duration, CancellationToken ct)
+    // Public instances of Lyrica (https://codeberg.org/willooper/Lyrica), an open lyrics API that asks
+    // LRCLIB, NetEase, YouTube Music, Musixmatch and others. The second is only tried if the first is down.
+    private static readonly string[] LyricaHosts = ["https://wilooper-lyrica.hf.space", "https://test-0k.onrender.com"];
+
+    // A song nobody has lyrics for can keep Lyrica searching for a minute: give up long before that.
+    private static readonly TimeSpan LyricaTimeout = TimeSpan.FromSeconds(10);
+
+    private async Task<List<LyricLine>> GetLyricaAsync(Track track, TimeSpan duration, CancellationToken ct)
     {
-        var artist = track.PrimaryArtist;
-        var url = "https://lrclib.net/api/get" +
-                  $"?track_name={Uri.EscapeDataString(track.Title)}" +
-                  $"&artist_name={Uri.EscapeDataString(artist)}" +
-                  (track.Album is { Length: > 0 } and not "YouTube" ? $"&album_name={Uri.EscapeDataString(track.Album)}" : "") +
-                  (duration > TimeSpan.Zero ? $"&duration={(int)Math.Round(duration.TotalSeconds)}" : "");
-
-        JsonNode? hit = null;
-        using (var resp = await _http.GetAsync(url, ct))
+        var query = $"/lyrics/?artist={Uri.EscapeDataString(track.PrimaryArtist)}&song={Uri.EscapeDataString(CleanTitle(track.Title))}&timestamps=true&fast=true";
+        JsonNode? data = null;
+        foreach (var host in LyricaHosts)
         {
-            if (resp.IsSuccessStatusCode)
-                hit = JsonNode.Parse(await resp.Content.ReadAsStringAsync(ct));
-            else if (resp.StatusCode != HttpStatusCode.NotFound)
-                resp.EnsureSuccessStatusCode();
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeout.CancelAfter(LyricaTimeout);
+            try
+            {
+                using var resp = await _http.GetAsync(host + query, timeout.Token);
+                if ((int)resp.StatusCode >= 500) continue; // that instance is down
+                var json = JsonNode.Parse(await resp.Content.ReadAsStringAsync(timeout.Token));
+                if ((string?)json?["status"] == "success") data = json?["data"];
+                break; // "no lyrics" is an answer: the other instance would say the same
+            }
+            catch (HttpRequestException) { } // unreachable: try the other one
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested) { break; } // still searching: nothing found
         }
+        if (data == null || (bool?)data["instrumental"] == true) return [];
 
-        // Exact lookup failed: search, but only accept versions as long as the audio (else they'd drift).
-        if (hit == null || ((string?)hit["syncedLyrics"] == null && (string?)hit["plainLyrics"] == null))
-        {
-            var search = $"https://lrclib.net/api/search?q={Uri.EscapeDataString($"{artist} {CleanTitle(track.Title)}")}";
-            var results = (JsonNode.Parse(await _http.GetStringAsync(search, ct))?.AsArray() ?? []).OfType<JsonNode>().ToList();
-            bool Fits(JsonNode r) => duration <= TimeSpan.Zero ||
-                                     (double?)r["duration"] is { } d && Math.Abs(d - duration.TotalSeconds) <= LengthTolerance.TotalSeconds;
-            hit = results.FirstOrDefault(r => (string?)r["syncedLyrics"] != null && Fits(r))
-                  ?? results.FirstOrDefault(r => (string?)r["plainLyrics"] != null); // unsynced can't drift
-            if (hit != null && !Fits(hit)) hit = new JsonObject { ["plainLyrics"] = (string?)hit["plainLyrics"] };
-        }
+        // Only trust the timing of a version as long as the audio (a radio edit or intro would drift).
+        var fits = duration <= TimeSpan.Zero || (double?)data["duration"] is not { } d || d <= 0 ||
+                   Math.Abs(d - duration.TotalSeconds) <= LengthTolerance.TotalSeconds;
 
-        if (hit == null) return [];
-        if ((string?)hit["syncedLyrics"] is { Length: > 0 } synced) return ParseLrc(synced);
-        if ((string?)hit["plainLyrics"] is { Length: > 0 } plain)
-            return plain.Split('\n').Select(l => Plain(l.TrimEnd('\r'))).ToList();
-        return [];
+        var timed = (data["timed_lyrics"]?.AsArray() ?? []).OfType<JsonNode>()
+            .Select(l => (Ms: (double?)l["start_time"] ?? -1, Text: ((string?)l["text"] ?? "").Trim()))
+            .Where(l => l.Ms >= 0)
+            .ToList();
+        // NetEase's credit lines ("作词 : ...", "Samples: ...") come first, stamped a few milliseconds apart.
+        var skip = 0;
+        while (skip + 1 < timed.Count && timed[skip].Ms < 3000 && (timed[skip + 1].Ms - timed[skip].Ms < 300 || CreditLine().IsMatch(timed[skip].Text))) skip++;
+        timed = timed.Skip(skip).Where(l => !CreditLine().IsMatch(l.Text)).ToList();
+
+        if ((bool?)data["hasTimestamps"] == true && fits && timed.Count > 0)
+            return ParseLrc(string.Join('\n', timed.Select(l =>
+                string.Create(CultureInfo.InvariantCulture, $"[{(int)(l.Ms / 60000)}:{l.Ms % 60000 / 1000:00.000}]{l.Text}"))));
+
+        // Unsynced (or a different length): the words without timing.
+        var plain = timed.Count > 0 ? timed.Select(l => l.Text) : ((string?)data["lyrics"] ?? "").Split('\n').Select(l => LrcLine().Match(l.Trim()) is { Success: true } m ? m.Groups[3].Value.Trim() : l.Trim());
+        return plain.Where(l => !CreditLine().IsMatch(l)).Select(Plain).ToList();
     }
 
     // ---------------------------------------------------------------- NetEase (word-timed)
@@ -147,7 +161,7 @@ public sealed partial class LyricsService
         string.Join('\n', lrc.Split('\n').Where(l => !CreditLine().IsMatch(LrcLine().Match(l.Trim()) is { Success: true } m ? m.Groups[3].Value : "")));
 
     // Credit lines NetEase adds ("作词 : ...", "Producer: ...").
-    [GeneratedRegex(@"^\s*(作词|作曲|编曲|制作人|制作|混音|母带|和声|吉他|贝斯|鼓|弦乐|录音|监制|出品|Lyricist|Composer|Producer|Arranger|Written by|Lyrics by|Music by)\s*[:：]", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*(作词|作曲|编曲|制作人|制作|混音|母带|和声|吉他|贝斯|鼓|弦乐|录音|监制|出品|Lyricist|Composer|Producer|Co-producers?|Arranger|Writers?|Samples?|Written by|Lyrics by|Music by)\s*[:：]", RegexOptions.IgnoreCase)]
     private static partial Regex CreditLine();
 
     // "[lineStartMs,lineDurMs](wordStartMs,wordDurMs,0)word (…)word…"
