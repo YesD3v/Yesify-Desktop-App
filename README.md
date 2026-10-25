@@ -18,8 +18,7 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
 - **Queue**: a resizable side panel (shared with Lyrics) with Up next and Recently played. Drag songs
   to reorder. Right-click a song for Play next or Add to queue. The queue is saved between sessions.
 - **Synced lyrics**, matched to the exact length of the audio playing: word-by-word timing from NetEase
-  Cloud Music's public lyrics when available, otherwise line timing from
-  [Lyrica](https://codeberg.org/willooper/Lyrica), a free open lyrics API (LRCLIB, YouTube Music, Musixmatch and more).
+  Cloud Music's public lyrics when available, otherwise line timing from [LRCLIB](https://lrclib.net).
   Click a line to jump to it.
 - **Miniplayer**: a small always-on-top window with a gradient taken from the album cover. Resize it
   freely: wide puts the cover on the left, tall puts it on top.
@@ -86,7 +85,7 @@ in `%LOCALAPPDATA%\Yesify\cache`.
 | `Services/Mp4Fixer.cs` | Removes an edit-list box that makes Windows decode some YouTube files as silence |
 | `Services/AudioPlayer.cs` | NAudio + Windows Media Foundation playback, plus a smooth playback clock for lyrics |
 | `Services/PreciseSeekReader.cs` | Sample-exact seeking (Media Foundation's own seeking lands up to 14 s off on these files) |
-| `Services/LyricsService.cs` | NetEase word-timed lyrics, Lyrica fallback, LRC parsing |
+| `Services/LyricsService.cs` | NetEase word-timed lyrics, LRCLIB fallback, LRC parsing |
 | `Services/LibraryService.cs` | Your playlists and the library search index |
 | `Services/LikedService.cs` | Local Liked Songs |
 | `Services/DiscordPresence.cs` | Discord Rich Presence over Discord's local pipe (no SDK) |

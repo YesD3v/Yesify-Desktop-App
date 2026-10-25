@@ -797,7 +797,7 @@
 
                     <TextBlock Text="ABOUT" Style="{StaticResource SectionLabel}" Margin="0,24,0,10" />
                     <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}"
-                               Text="Yesify · playlists from Spotify's public pages, audio from YouTube, lyrics from NetEase and Lyrica. No account, no ads, unlimited skips." />
+                               Text="Yesify · playlists from Spotify's public pages, audio from YouTube, lyrics from LRCLIB. No account, no ads, unlimited skips." />
                 </StackPanel>
             </Border>
             </Grid>
