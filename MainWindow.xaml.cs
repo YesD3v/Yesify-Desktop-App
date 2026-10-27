@@ -318,6 +318,11 @@ public partial class MainWindow : Window, IFrostSource
 
     // ---------------------------------------------------------------- library tiles
 
+    private void HomeTile_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: Services.HomeItem item }) Vm.OpenHomeItemCommand.Execute(item);
+    }
+
     private void LibraryTile_Click(object sender, RoutedEventArgs e)
     {
         if (sender is FrameworkElement { DataContext: LibraryItem item }) Vm.OpenLibraryItemCommand.Execute(item);

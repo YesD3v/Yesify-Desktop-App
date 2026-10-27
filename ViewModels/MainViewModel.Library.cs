@@ -7,7 +7,7 @@ using Yesify.Services;
 
 namespace Yesify.ViewModels;
 
-public enum ViewMode { Library, Search, Collection }
+public enum ViewMode { Home, Library, Search, Collection }
 
 /// <summary>Library, search, and the user's own playlists.</summary>
 public sealed partial class MainViewModel
@@ -16,19 +16,20 @@ public sealed partial class MainViewModel
 
     // ================================================================ views
 
-    [ObservableProperty] private ViewMode _currentView = ViewMode.Library;
+    [ObservableProperty] private ViewMode _currentView = ViewMode.Home;
     [ObservableProperty] private UserPlaylist? _currentUserPlaylist;
     [ObservableProperty] private string _viewDescription = "";
 
     public bool IsLibraryView => CurrentView == ViewMode.Library;
     public bool IsSearchView => CurrentView == ViewMode.Search;
-    public bool IsTrackView => CurrentView != ViewMode.Library;
+    public bool IsTrackView => CurrentView is ViewMode.Search or ViewMode.Collection;
 
     /// <summary>The "…" menu on the header: anything with songs that can go into a playlist.</summary>
     public bool HasHeaderMenu => CurrentView == ViewMode.Collection && (CurrentCollection != null || CurrentUserPlaylist != null || ViewIsLikedHeader);
 
     partial void OnCurrentViewChanged(ViewMode value)
     {
+        OnPropertyChanged(nameof(IsHomeView));
         OnPropertyChanged(nameof(IsLibraryView));
         OnPropertyChanged(nameof(IsSearchView));
         OnPropertyChanged(nameof(IsTrackView));

@@ -15,11 +15,14 @@ namespace Yesify.Services;
 
 /// <summary>
 /// Finds and downloads audio for tracks from YouTube via YoutubeExplode.
-/// Audio is cached on disk so replays and prefetched "next" tracks start instantly.
+/// Audio is cached on disk so replays and prefetched "next" tracks start instantly. The cache stays under
+/// <see cref="MaxCacheBytes"/>: the playing and next songs are always kept, songs that were only prefetched
+/// or skipped go first, and songs played often and recently are kept longest.
 /// </summary>
 public sealed class YouTubeService
 {
-    private const long MaxCacheBytes = 1L * 1024 * 1024 * 1024;
+    public const long MaxCacheBytes = 100L * 1024 * 1024;
+    private const string StatsFile = "audio-cache.json";
 
     private static readonly string CacheDir =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Yesify", "cache");
@@ -34,9 +37,24 @@ public sealed class YouTubeService
     private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _downloads = new();
     private readonly ConcurrentDictionary<string, Lazy<Task<string>>> _matches = new();
 
+    /// <summary>How each cached video has been used, keyed by video id.</summary>
+    public sealed class UsageStats
+    {
+        public int Plays { get; set; }
+        public int Finished { get; set; }
+        public DateTime LastPlayed { get; set; }
+    }
+
+    private static readonly object CacheLock = new();
+    private static readonly Dictionary<string, UsageStats> Usage = Storage.Load<Dictionary<string, UsageStats>>(StatsFile);
+    private Track? _current, _next;
+    private int _prefetchGeneration;
+
     public YouTubeService()
     {
         Directory.CreateDirectory(CacheDir);
+        foreach (var f in Directory.EnumerateFiles(CacheDir, "*.part"))
+            try { File.Delete(f); } catch { /* in use */ }
         TrimCache();
     }
 
@@ -51,7 +69,9 @@ public sealed class YouTubeService
             throw new InvalidOperationException("this song isn't available on Spotify anymore");
         }
 
-        if (track.YouTubeId == null)
+        // Spotify songs always go through the matcher (instant once matched), so a wrong video saved in a
+        // playlist or session by an older version gets replaced.
+        if (track.YouTubeId == null || track.SpotifyId != null)
         {
             // Share one search between "play now" and "prefetch" so they can't pick different videos.
             var match = _matches.GetOrAdd(track.Key, _ => new Lazy<Task<string>>(() => FindVideoIdAsync(track, new CancellationTokenSource(TimeSpan.FromSeconds(30)).Token)));
@@ -122,25 +142,60 @@ public sealed class YouTubeService
         }
         Mp4Fixer.RemoveEditList(part);
         File.Move(part, path, overwrite: true);
+        TrimCache(except: videoId); // it's about to play (or be next)
         return path;
     }
 
+    /// <summary>
+    /// Call when a song starts playing: counts the play, keeps it and the next song in the cache, and
+    /// downloads the next song a few seconds later (only if the user hasn't moved on by then).
+    /// </summary>
+    public void NowPlaying(Track current, Track? next)
+    {
+        _current = current;
+        if (current.YouTubeId != null)
+        {
+            lock (CacheLock)
+            {
+                var stats = Usage.TryGetValue(current.YouTubeId, out var s) ? s : Usage[current.YouTubeId] = new UsageStats();
+                stats.Plays++;
+                stats.LastPlayed = DateTime.UtcNow;
+            }
+            SaveUsage();
+        }
+        Prefetch(next);
+    }
+
+    /// <summary>Call when a song played to its end; finished songs are kept over skipped ones.</summary>
+    public void Finished(Track track)
+    {
+        if (track.YouTubeId == null) return;
+        lock (CacheLock)
+            if (Usage.TryGetValue(track.YouTubeId, out var stats)) stats.Finished++;
+        SaveUsage();
+    }
+
+    /// <summary>Downloads the song that plays next, after a short wait so fast skipping doesn't download every song.</summary>
     public void Prefetch(Track? track)
     {
+        _next = track;
+        var generation = Interlocked.Increment(ref _prefetchGeneration);
         if (track == null) return;
         _ = Task.Run(async () =>
         {
+            await Task.Delay(TimeSpan.FromSeconds(5));
+            if (generation != _prefetchGeneration) return; // another song started or the queue changed
             try { await GetAudioFileAsync(track, CancellationToken.None); } catch { /* best effort */ }
         });
     }
     // ---------------------------------------------------------------- matching
 
-    /// <summary>A search hit from either YouTube Music or regular YouTube.</summary>
-    private sealed record Candidate(string VideoId, string Title, string Artists, TimeSpan? Duration, bool? IsExplicit);
+    /// <summary>A search hit from either YouTube Music (clean song titles) or regular YouTube.</summary>
+    private sealed record Candidate(string VideoId, string Title, string Artists, TimeSpan? Duration, bool? IsExplicit, bool FromMusic);
 
     // v3: matches made before every credited artist was searched (and wrong artists penalised) may be a
     // different song with the same title; v2 also predates telling explicit and clean versions apart.
-    private const string MatchCacheFile = "matches-v3.json";
+    private const string MatchCacheFile = "matches-v4.json"; // v3 could hold songs with the wrong title
 
     private readonly ConcurrentDictionary<string, string> _matchCache =
         new(Storage.Load<Dictionary<string, string>>(MatchCacheFile));
@@ -175,14 +230,20 @@ public sealed class YouTubeService
                 if (seen.Add(found[i].VideoId)) scored.Add((found[i], Score(found[i], i, track, title)));
             if (scored.Any(x => IsSameSong(x.C, track, title))) break;
         }
-        if (scored.Count == 0)
+        // Unreleased and leaked songs often aren't on YouTube Music; regular YouTube may have an upload.
+        if (!scored.Any(x => IsSameSong(x.C, track, title)))
         {
-            var found = await SearchVideosAsync($"{track.PrimaryArtist} - {title}", ct);
-            scored.AddRange(found.Select((c, i) => (c, Score(c, i, track, title))));
+            List<Candidate> found;
+            try { found = await SearchVideosAsync($"{track.PrimaryArtist} - {title}", ct); }
+            catch (OperationCanceledException) { throw; }
+            catch { found = []; }
+            foreach (var (c, i) in found.Select((c, i) => (c, i)))
+                if (seen.Add(c.VideoId)) scored.Add((c, Score(c, i, track, title)));
         }
-        // A result with neither the title nor any of the artists is some other video, not this song.
-        scored.RemoveAll(x => !(title.Length > 0 && x.C.Title.Contains(title, StringComparison.OrdinalIgnoreCase)) && !ArtistMatches(x.C, track));
-        if (scored.Count == 0) throw new InvalidOperationException($"no YouTube results for \"{track.Artist} - {title}\"");
+        // A result without the song's title is another song (often a hit by the same artist), and one by
+        // none of its artists is a different song with the same name: playing nothing beats playing those.
+        scored.RemoveAll(x => title.Length > 0 ? !IsSameSong(x.C, track, title) : !ArtistMatches(x.C, track));
+        if (scored.Count == 0) throw new InvalidOperationException($"couldn't find \"{track.Artist} - {title}\" on YouTube");
 
         var best = scored.OrderByDescending(x => x.Score).First().C.VideoId;
 
@@ -202,18 +263,29 @@ public sealed class YouTubeService
         return track.Artist.Split(',').Select(a => Squash(a)).Any(a => a.Length > 0 && haystack.Contains(a));
     }
 
+    /// <summary>
+    /// Is the result titled as the song, ignoring case, spaces and punctuation? YouTube Music titles must be
+    /// the same song name ("Fly Away" is not "I'll Fly Away"); video titles only have to contain it.
+    /// </summary>
+    private static bool TitleMatches(Candidate c, string cleanTitle)
+    {
+        static string Squash(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+        var want = Squash(cleanTitle);
+        if (want.Length == 0) return c.Title.Contains(cleanTitle, StringComparison.OrdinalIgnoreCase);
+        return c.FromMusic ? Squash(CleanTitle(c.Title)) == want : Squash(c.Title).Contains(want);
+    }
+
     private static bool IsSameSong(Candidate c, Track track, string cleanTitle) =>
-        c.Title.Contains(cleanTitle, StringComparison.OrdinalIgnoreCase) && ArtistMatches(c, track);
+        TitleMatches(c, cleanTitle) && ArtistMatches(c, track);
 
     private static double Score(Candidate c, int rank, Track track, string cleanTitle)
     {
         var title = c.Title.ToLowerInvariant();
         var artists = c.Artists.ToLowerInvariant();
-        var wantTitle = cleanTitle.ToLowerInvariant();
         var original = track.Title.ToLowerInvariant();
 
         double s = -rank * 2;
-        if (title.Contains(wantTitle)) s += 30;
+        if (TitleMatches(c, cleanTitle)) s += 30;
         // A song with the right title by someone else is a different song: only take it if nothing better exists.
         s += ArtistMatches(c, track) ? 20 : -60;
         if (artists.EndsWith("- topic")) s += 25; // auto-generated official audio uploads
@@ -274,7 +346,7 @@ public sealed class YouTubeService
             // Second column reads "Artist(s) • Album • 3:08".
             var parts = Text(columns[1]).Split(" • ");
             var explicitBadge = item["badges"]?.ToJsonString().Contains("MUSIC_EXPLICIT_BADGE") == true;
-            results.Add(new Candidate(videoId, Text(columns[0]), parts[0], ParseDuration(parts[^1]), explicitBadge));
+            results.Add(new Candidate(videoId, Text(columns[0]), parts[0], ParseDuration(parts[^1]), explicitBadge, true));
             if (results.Count >= 10) break;
         }
         return results;
@@ -286,7 +358,7 @@ public sealed class YouTubeService
         await foreach (var v in _yt.Search.GetVideosAsync(query, ct))
         {
             // Regular YouTube can't tell explicit from clean, so lean on the title.
-            results.Add(new Candidate(v.Id.Value, v.Title, v.Author.ChannelTitle, v.Duration, null));
+            results.Add(new Candidate(v.Id.Value, v.Title, v.Author.ChannelTitle, v.Duration, null, false));
             if (results.Count >= 10) break;
         }
         return results;
@@ -400,22 +472,63 @@ public sealed class YouTubeService
         {
             try { f.Delete(); } catch { /* in use */ }
         }
+        lock (CacheLock) Usage.Clear();
+        SaveUsage();
     }
 
-    private static void TrimCache()
+    /// <summary>
+    /// Deletes the least useful songs until the cache fits its budget. Never touches the playing or next
+    /// song, or a download in progress. Songs that never played go first; the rest are ranked by when they
+    /// were last played, with a bonus for each time they were played to the end.
+    /// </summary>
+    private void TrimCache(string? except = null)
     {
         try
         {
-            var files = new DirectoryInfo(CacheDir).GetFiles().OrderBy(f => f.LastAccessTimeUtc).ToList();
-            foreach (var f in files.Where(f => f.Name.EndsWith(".part"))) f.Delete();
-            var total = files.Where(f => f.Exists).Sum(f => f.Length);
-            foreach (var f in files.Where(f => f.Exists))
+            lock (CacheLock)
             {
-                if (total <= MaxCacheBytes) break;
-                total -= f.Length;
-                f.Delete();
+                var keep = new[] { _current?.YouTubeId, _next?.YouTubeId, except };
+                var files = new DirectoryInfo(CacheDir).GetFiles()
+                    .Where(f => f.Extension is not (".part" or ".tmp"))
+                    .ToList();
+                var total = files.Sum(f => f.Length);
+                if (total <= MaxCacheBytes) return;
+
+                double Score(FileInfo f)
+                {
+                    if (!Usage.TryGetValue(Path.GetFileNameWithoutExtension(f.Name), out var s) || s.Plays == 0)
+                        return f.LastWriteTimeUtc.Ticks / (double)TimeSpan.TicksPerDay - 100_000; // never played
+                    var bonus = Math.Min(s.Finished, 10) * 2.0 - (s.Finished == 0 ? 3 : 0); // days
+                    return s.LastPlayed.Ticks / (double)TimeSpan.TicksPerDay + bonus;
+                }
+
+                foreach (var f in files.Where(f => !keep.Contains(Path.GetFileNameWithoutExtension(f.Name))).OrderBy(Score))
+                {
+                    if (total <= MaxCacheBytes) break;
+                    try
+                    {
+                        var size = f.Length;
+                        f.Delete();
+                        total -= size;
+                    }
+                    catch { /* playing or locked */ }
+                }
+
+                // Forget songs that are no longer on disk, so the stats file stays small.
+                var onDisk = new DirectoryInfo(CacheDir).GetFiles().Select(f => Path.GetFileNameWithoutExtension(f.Name)).ToHashSet();
+                foreach (var id in Usage.Keys.Where(id => !onDisk.Contains(id)).ToList()) Usage.Remove(id);
             }
+            SaveUsage();
         }
         catch { /* cache trimming is best effort */ }
+    }
+
+    private static void SaveUsage()
+    {
+        try
+        {
+            lock (CacheLock) Storage.Save(StatsFile, Usage);
+        }
+        catch { /* stats only */ }
     }
 }

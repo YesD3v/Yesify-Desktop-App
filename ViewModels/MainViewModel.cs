@@ -49,6 +49,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Tracks.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTracks));
         RefreshSidebar();
         RestoreSession();
+        LoadHome();
     }
 
     // ================================================================ bindable state
@@ -346,7 +347,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void OpenSettings()
     {
-        CacheSizeText = FormatSize(YouTubeService.CacheSize());
+        CacheSizeText = $"{FormatSize(YouTubeService.CacheSize())} of {FormatSize(YouTubeService.MaxCacheBytes)}";
         IsSettingsOpen = true;
     }
 
@@ -357,7 +358,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ClearAudioCache()
     {
         YouTubeService.ClearCache();
-        CacheSizeText = FormatSize(YouTubeService.CacheSize());
+        CacheSizeText = $"{FormatSize(YouTubeService.CacheSize())} of {FormatSize(YouTubeService.MaxCacheBytes)}";
         StatusText = "Downloaded audio cleared.";
     }
 
@@ -819,6 +820,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _playCts?.Cancel();
         var cts = _playCts = new CancellationTokenSource();
 
+        RecordListen();
         _player.Stop();
         if (CurrentTrack != null && !ReferenceEquals(CurrentTrack, track))
         {
@@ -842,6 +844,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             if (cts.IsCancellationRequested) return;
 
             _player.Play(path);
+            _listenTrack = track;
             if (ReferenceEquals(track, _resumeTrack) && _resumeAt > TimeSpan.FromSeconds(1))
                 _player.Seek(_resumeAt); // continuing the restored session
             _resumeTrack = null;
@@ -852,7 +855,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             DurationSeconds = Math.Max(1, _player.Duration.TotalSeconds);
             DurationText = Track.Format(_player.Duration);
             StatusText = "";
-            _youtube.Prefetch(PeekNext());
+            _youtube.NowPlaying(track, PeekNext());
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -902,6 +905,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _ = SkipBrokenTrackAsync("the audio stopped early");
             return;
         }
+        RecordListen();
+        if (CurrentTrack != null) _youtube.Finished(CurrentTrack);
         if (Repeat == RepeatMode.One && CurrentTrack != null)
             _ = PlayTrackAsync(CurrentTrack);
         else
@@ -1055,6 +1060,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public void Dispose()
     {
         _sessionTimer?.Stop();
+        RecordListen();
         SaveSession();
         SaveSettings();
         _timer.Stop();

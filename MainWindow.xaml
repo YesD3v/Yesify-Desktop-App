@@ -195,7 +195,14 @@
                         </Button>
 
                         <StackPanel Grid.Row="1">
-                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowLibraryCommand}" Tag="{Binding IsLibraryView}" ToolTip="Library">
+                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowHomeCommand}" Tag="{Binding IsHomeView}" ToolTip="Home">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE80F;" FontFamily="{StaticResource IconFont}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Width="18" TextAlignment="Center" Margin="0,0,10,0" />
+                                    <TextBlock Text="Home" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                               Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowLibraryCommand}" Tag="{Binding IsLibraryView}" ToolTip="Library" Margin="0,2,0,0">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE8F1;" FontFamily="{StaticResource IconFont}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Width="18" TextAlignment="Center" Margin="0,0,10,0" />
                                     <TextBlock Text="Library" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -229,6 +236,80 @@
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
                     </Grid.RowDefinitions>
+
+                    <!-- Home: rows of mixes, songs, releases and artists picked from what you play -->
+                    <ScrollViewer x:Name="HomeScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsHomeView, Converter={StaticResource BoolToVis}}">
+                        <StackPanel Margin="32,28,20,24">
+                            <Grid>
+                                <TextBlock Text="{Binding Greeting}" FontSize="40" FontWeight="Bold" />
+                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0">
+                                    <TextBlock Text="Updating…" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,0,10,0"
+                                               Visibility="{Binding IsHomeBuilding, Converter={StaticResource BoolToVis}}" />
+                                    <Button Style="{StaticResource IconButton}" Content="&#xE72C;" FontSize="16" Width="40" Height="40" ToolTip="New picks"
+                                            Command="{Binding RefreshHomeCommand}" />
+                                </StackPanel>
+                            </Grid>
+                            <TextBlock Text="{Binding HomeStatus}" FontSize="14" Foreground="{DynamicResource SubtleTextBrush}" TextWrapping="Wrap" MaxWidth="560"
+                                       HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding HomeStatus, Converter={StaticResource NullToVis}}" />
+                            <ItemsControl ItemsSource="{Binding HomeSections}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate>
+                                        <StackPanel Margin="0,26,0,0">
+                                            <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="Bold" />
+                                            <TextBlock Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,2,0,0"
+                                                       Visibility="{Binding Subtitle, Converter={StaticResource NullToVis}}" />
+                                            <ItemsControl ItemsSource="{Binding Items}" Margin="-8,10,0,0">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <local:OneRowPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <Button Width="184" Margin="0,0,4,0" Cursor="Hand" Foreground="{StaticResource TextBrush}" Click="HomeTile_Click" ToolTip="{Binding Title}">
+                                                            <Button.Template>
+                                                                <ControlTemplate TargetType="Button">
+                                                                    <Border x:Name="Bd" Background="Transparent" CornerRadius="10" Padding="8">
+                                                                        <ContentPresenter />
+                                                                    </Border>
+                                                                    <ControlTemplate.Triggers>
+                                                                        <Trigger Property="IsMouseOver" Value="True">
+                                                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RaisedBrush}" />
+                                                                        </Trigger>
+                                                                    </ControlTemplate.Triggers>
+                                                                </ControlTemplate>
+                                                            </Button.Template>
+                                                            <StackPanel>
+                                                                <Border x:Name="Art" Width="168" Height="168" CornerRadius="8" Background="{DynamicResource RaisedBrush}">
+                                                                    <Grid>
+                                                                        <TextBlock x:Name="Placeholder" Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="40" Foreground="{DynamicResource FaintTextBrush}"
+                                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                                        <Border x:Name="Pic" CornerRadius="8" local:AsyncImage.BackgroundUrl="{Binding ImageUrl}" local:AsyncImage.Width="336" />
+                                                                    </Grid>
+                                                                </Border>
+                                                                <TextBlock x:Name="Name" Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Margin="2,10,0,0" TextTrimming="CharacterEllipsis" />
+                                                                <TextBlock x:Name="Sub" Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="2,2,0,0"
+                                                                           TextTrimming="CharacterEllipsis" />
+                                                            </StackPanel>
+                                                        </Button>
+                                                        <DataTemplate.Triggers>
+                                                            <DataTrigger Binding="{Binding Kind}" Value="Artist">
+                                                                <Setter TargetName="Art" Property="CornerRadius" Value="84" />
+                                                                <Setter TargetName="Pic" Property="CornerRadius" Value="84" />
+                                                                <Setter TargetName="Placeholder" Property="Text" Value="&#xE77B;" />
+                                                                <Setter TargetName="Name" Property="TextAlignment" Value="Center" />
+                                                                <Setter TargetName="Sub" Property="TextAlignment" Value="Center" />
+                                                            </DataTrigger>
+                                                        </DataTemplate.Triggers>
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </StackPanel>
+                    </ScrollViewer>
 
                     <!-- Library: a grid of covers -->
                     <ScrollViewer x:Name="LibraryScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsLibraryView, Converter={StaticResource BoolToVis}}">
@@ -789,10 +870,18 @@
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Text="Downloaded audio" FontSize="14" />
                             <TextBlock FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0">
-                                <Run Text="{Binding CacheSizeText, Mode=OneWay}" /><Run Text=" · songs are re-downloaded when played again" />
+                                <Run Text="{Binding CacheSizeText, Mode=OneWay}" /><Run Text=" · keeps the songs you play most and the next one up" />
                             </TextBlock>
                         </StackPanel>
                         <Button Style="{StaticResource PillButton}" Content="Clear" HorizontalAlignment="Right" Command="{Binding ClearAudioCacheCommand}" />
+                    </Grid>
+                    <Grid Margin="0,14,0,0">
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,90,0">
+                            <TextBlock Text="Listening history" FontSize="14" />
+                            <TextBlock FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap"
+                                       Text="What you play, kept on this PC to pick Home's mixes and recommendations" />
+                        </StackPanel>
+                        <Button Style="{StaticResource PillButton}" Content="Clear" HorizontalAlignment="Right" Command="{Binding ClearListeningHistoryCommand}" />
                     </Grid>
 
                     <TextBlock Text="ABOUT" Style="{StaticResource SectionLabel}" Margin="0,24,0,10" />
