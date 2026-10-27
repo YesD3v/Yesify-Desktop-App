@@ -9,7 +9,8 @@ namespace Yesify;
 
 /// <summary>
 /// Apple Music-style lyrics. In glass mode, while the lyrics are visible and music plays, it runs once per
-/// frame from the exact audio position: a soft white gradient sweeps across each word as it's sung,
+/// frame from the exact audio position: a soft white gradient sweeps across each word as it's sung (when the
+/// lyrics have real per-word timing; line-timed lyrics light the whole line),
 /// instrumental breaks show three dots that fill up and breathe, and the view glides to the active line.
 /// Otherwise (paused, hidden, lightweight) it just lights the active line, with no per-frame work.
 /// </summary>
@@ -105,6 +106,8 @@ public sealed class LyricsAnimator
             return;
         }
 
+        // Only sweep word by word when the source timed each word; guessed timing would drift, so the whole line lights up.
+        sweep &= line.IsWordTimed;
         var words = Words(root);
         for (var i = 0; i < words.Count && i < line.Words.Count; i++)
         {
