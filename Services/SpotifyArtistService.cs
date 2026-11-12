@@ -53,16 +53,19 @@ public sealed partial class SpotifyArtistService
 
     private readonly HttpClient _http = new() { Timeout = TimeSpan.FromSeconds(20) };
     private readonly SemaphoreSlim _gate = new(4);
-    private readonly ConcurrentDictionary<string, ArtistPage> _artists;
-    private readonly ConcurrentDictionary<string, List<ArtistRef>> _trackArtists;
+    // Loaded on first use (several MB): Home is shown from its own saved copy, so starting up doesn't wait for this.
+    private readonly Lazy<ConcurrentDictionary<string, ArtistPage>> _artistsLazy =
+        new(() => new(Storage.Load<Dictionary<string, ArtistPage>>(ArtistsFile)));
+    private readonly Lazy<ConcurrentDictionary<string, List<ArtistRef>>> _trackArtistsLazy =
+        new(() => new(Storage.Load<Dictionary<string, List<ArtistRef>>>(TrackArtistsFile)));
+    private ConcurrentDictionary<string, ArtistPage> _artists => _artistsLazy.Value;
+    private ConcurrentDictionary<string, List<ArtistRef>> _trackArtists => _trackArtistsLazy.Value;
     private readonly object _saveLock = new();
 
     public SpotifyArtistService()
     {
         _http.DefaultRequestHeaders.UserAgent.ParseAdd("Mozilla/5.0 (Windows NT 10.0; Win64; x64) Yesify/1.0");
         _http.DefaultRequestHeaders.AcceptLanguage.ParseAdd("en");
-        _artists = new(Storage.Load<Dictionary<string, ArtistPage>>(ArtistsFile));
-        _trackArtists = new(Storage.Load<Dictionary<string, List<ArtistRef>>>(TrackArtistsFile));
     }
 
     [GeneratedRegex("""<script[^>]*id="initialState"[^>]*>(.*?)</script>""", RegexOptions.Singleline)]

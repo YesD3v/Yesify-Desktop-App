@@ -49,6 +49,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         Tracks.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTracks));
         RefreshSidebar();
         RestoreSession();
+        RefreshQueue(); // the queue panel may be open from last time: fill it with the restored session
         LoadHome();
     }
 
@@ -160,6 +161,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     /// <summary>Most recent first.</summary>
     public ObservableCollection<QueueItem> HistoryView { get; } = [];
 
+    /// <summary>The queue shows this many Up next rows before a "Show more" button.</summary>
+    private const int QueuePageSize = 50;
+
+    /// <summary>Set once the user taps "Show more", so the whole queue is listed.</summary>
+    [ObservableProperty] private bool _queueExpanded;
+
+    /// <summary>True when Up next has more songs than are currently shown.</summary>
+    public bool HasMoreUpNext { get; private set; }
+
     // ---------------------------------------------------------------- saved session
 
     private const string SessionFile = "session.json";
@@ -180,17 +190,18 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         var state = new SessionState
         {
-            Context = _context,
-            Order = _order,
+            // Copies: the file is written on a background thread while these lists keep changing.
+            Context = _context.ToList(),
+            Order = _order.ToList(),
             OrderPos = _orderPos,
-            UpNext = _upNext,
-            History = _history,
+            UpNext = _upNext.ToList(),
+            History = _history.ToList(),
             Current = CurrentTrack,
             PositionSeconds = _player.HasTrack ? _player.Position.TotalSeconds : _resumeAt.TotalSeconds,
             Shuffle = Shuffle,
             Repeat = Repeat,
         };
-        try { Storage.Save(SessionFile, state); } catch { /* not fatal */ }
+        Storage.SaveInBackground(SessionFile, state);
     }
 
     /// <summary>Puts the last session back (paused); play continues from the saved position.</summary>
@@ -228,13 +239,27 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ScheduleSessionSave();
         if (!ShowQueue) return; // only maintained while someone is looking at it
 
+        var cap = QueueExpanded ? int.MaxValue : QueuePageSize;
+        var total = _upNext.Count + Math.Max(0, _order.Count - _orderPos - 1);
+
         UpNextView.Clear();
-        for (var i = 0; i < _upNext.Count; i++) UpNextView.Add(new QueueItem(_upNext[i], QueueSource.Queued, i));
-        for (var p = _orderPos + 1; p < _order.Count && UpNextView.Count < 60; p++)
+        for (var i = 0; i < _upNext.Count && UpNextView.Count < cap; i++)
+            UpNextView.Add(new QueueItem(_upNext[i], QueueSource.Queued, i));
+        for (var p = _orderPos + 1; p < _order.Count && UpNextView.Count < cap; p++)
             UpNextView.Add(new QueueItem(_context[_order[p]], QueueSource.Context, p));
 
+        HasMoreUpNext = total > UpNextView.Count;
+        OnPropertyChanged(nameof(HasMoreUpNext));
+
         HistoryView.Clear();
-        for (var i = 0; i < _history.Count && i < 40; i++) HistoryView.Add(new QueueItem(_history[i], QueueSource.History, i));
+        for (var i = 0; i < _history.Count; i++) HistoryView.Add(new QueueItem(_history[i], QueueSource.History, i));
+    }
+
+    [RelayCommand]
+    private void ShowMoreQueue()
+    {
+        QueueExpanded = true;
+        RefreshQueue();
     }
 
     [RelayCommand]
@@ -586,10 +611,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void Renumber()
     {
         for (var i = 0; i < Tracks.Count; i++) Tracks[i].Number = i + 1;
-        // Number isn't observable; re-adding is the cheap way to refresh rows.
-        var copy = Tracks.ToList();
-        Tracks.Clear();
-        foreach (var t in copy) Tracks.Add(t);
     }
 
     /// <summary>Runs a view load, cancelling whatever load was in progress.</summary>
@@ -761,13 +782,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (track == null) return;
         StartContext(Tracks.ToList(), Math.Max(0, Tracks.IndexOf(track)));
+        EnsureFullContext(CurrentCollection);
     }
 
     [RelayCommand]
     private void PlayAll()
     {
         if (Tracks.Count == 0) return;
-        StartContext(Tracks.ToList(), Shuffle ? Random.Shared.Next(Tracks.Count) : 0);
+        StartContext(Tracks.ToList(), Shuffle ? -1 : 0);
+        EnsureFullContext(CurrentCollection);
     }
 
     [RelayCommand]
@@ -775,7 +798,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     {
         if (Tracks.Count == 0) return;
         Shuffle = true;
-        StartContext(Tracks.ToList(), Random.Shared.Next(Tracks.Count));
+        StartContext(Tracks.ToList(), -1);
+        EnsureFullContext(CurrentCollection);
     }
 
     [RelayCommand]
@@ -788,12 +812,156 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         RefreshQueue();
     }
 
+    /// <summary>
+    /// Adds a whole list of songs (a playlist, an album, Liked Songs) to the end of the queue, in order
+    /// or shuffled. Shuffled uses the same draw as shuffle play: what you haven't heard lately comes first.
+    /// </summary>
+    /// <param name="next">Put them at the front of the queue ("Play Next") instead of the end.</param>
+    public void QueueAll(IReadOnlyList<Track> tracks, bool shuffled, string? name = null, bool next = false)
+    {
+        if (tracks.Count == 0)
+        {
+            StatusText = name != null ? $"“{name}” has no songs to queue." : "Nothing to queue.";
+            return;
+        }
+        var list = tracks.ToList();
+        if (shuffled)
+        {
+            var draw = FreshDraw();
+            list = list.OrderByDescending(draw).ToList();
+        }
+        foreach (var t in list) t.IsLiked = _liked.Contains(t);
+        if (next) _upNext.InsertRange(0, list);
+        else _upNext.AddRange(list);
+
+        var count = list.Count == 1 ? "1 song" : $"{list.Count} songs";
+        var what = name != null ? $"“{name}” ({count})" : list.Count == 1 ? $"“{list[0].Title}”" : count;
+        StatusText = next ? $"{what} plays next." : shuffled ? $"Queued {what}, shuffled." : $"Queued {what}.";
+        if (CurrentTrack == null) _ = PlayNextAsync(manual: true);
+        RefreshQueue();
+        _youtube.Prefetch(PeekNext());
+    }
+
+    /// <summary>
+    /// The songs behind a Library tile, without opening it. Imported playlists come from the open view or
+    /// the remembered copy if there is one; otherwise from Spotify / YouTube. Null if they couldn't be loaded.
+    /// </summary>
+    public async Task<List<Track>?> LibraryItemTracksAsync(LibraryItem item)
+    {
+        switch (item.Kind)
+        {
+            case LibraryItemKind.Liked:
+                return _liked.Tracks.ToList();
+            case LibraryItemKind.UserPlaylist when _library.Find(item.Id!) is { } p:
+                return p.Tracks.ToList();
+            case LibraryItemKind.Saved when item.Saved is { } saved:
+                var songs = CurrentCollection?.Id == saved.Id && !IsLoading ? Tracks.ToList() : _library.ImportedTracks(saved.Id);
+                if (songs != null) return songs;
+                StatusText = $"Loading “{saved.Name}”…";
+                try
+                {
+                    songs = await FetchCollectionTracksAsync(saved);
+                    await _covers.FillAsync(songs, CancellationToken.None);
+                    StatusText = "";
+                    return songs;
+                }
+                catch (Exception ex)
+                {
+                    StatusText = $"Couldn't load “{saved.Name}”: {ex.Message}";
+                    return null;
+                }
+        }
+        return null;
+    }
+
+    /// <summary>Queues a playlist straight from its Library tile, without opening it.</summary>
+    public async Task QueueLibraryItemAsync(LibraryItem item, bool shuffled)
+    {
+        if (await LibraryItemTracksAsync(item) is { } songs) QueueAll(songs, shuffled, item.Title);
+    }
+
+    /// <summary>Starts playing a list of songs (from a menu, without opening it), from the top or shuffled.</summary>
+    public void PlayTracks(IReadOnlyList<Track> tracks, bool shuffled)
+    {
+        if (tracks.Count == 0) return;
+        if (shuffled) Shuffle = true;
+        foreach (var t in tracks) t.IsLiked = _liked.Contains(t);
+        StartContext(tracks.ToList(), Shuffle ? -1 : 0);
+    }
+
+    public bool IsLiked(Track track) => _liked.Contains(track);
+
+    /// <param name="startIndex">The song to start with, or -1 to let the shuffle pick one.</param>
     private void StartContext(List<Track> tracks, int startIndex)
     {
+        _contextFillCts?.Cancel(); // drop any background fill from the previous context
+        _radioExhausted = false;
+        QueueExpanded = false;
         _context = tracks;
         _upNext.Clear();
+        if (startIndex < 0) startIndex = FreshShuffle(Enumerable.Range(0, _context.Count))[0];
         BuildOrder(startIndex);
         _ = PlayTrackAsync(_context[_order[_orderPos]]);
+    }
+
+    /// <summary>
+    /// A Spotify playlist's embed page only lists its first 100 songs; the rest stream into the open view
+    /// afterwards. If playback started before they arrived, the context would be just those 100 and loop.
+    /// This fetches the complete list in the background and appends whatever is missing to the context, so
+    /// a long playlist plays all the way through. Scoped to Spotify playlists — the only paginated case.
+    /// </summary>
+    private CancellationTokenSource? _contextFillCts;
+
+    private void EnsureFullContext(PlaylistInfo? collection)
+    {
+        _contextFillCts?.Cancel();
+        if (collection is not { Kind: CollectionKind.Playlist }) return;
+
+        var cts = _contextFillCts = new CancellationTokenSource();
+        var startedFrom = _context; // the exact list this fill is for
+        var ui = Dispatcher.CurrentDispatcher;
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                var all = await FetchCollectionTracksAsync(collection);
+                await ui.InvokeAsync(() =>
+                {
+                    if (!cts.IsCancellationRequested && ReferenceEquals(_context, startedFrom))
+                        AppendToContext(all);
+                });
+            }
+            catch { /* keep whatever the view already loaded */ }
+        });
+    }
+
+    /// <summary>Adds songs not already in the context to the end of the play order (or interspersed, when shuffled).</summary>
+    private void AppendToContext(IReadOnlyList<Track> tracks)
+    {
+        var have = _context.Select(t => t.Key).ToHashSet();
+        var added = new List<int>();
+        foreach (var t in tracks)
+        {
+            if (!have.Add(t.Key)) continue;
+            t.IsLiked = _liked.Contains(t);
+            _context.Add(t);
+            added.Add(_context.Count - 1);
+        }
+        if (added.Count == 0) return;
+
+        if (Shuffle)
+        {
+            // Reshuffle everything still to come together with the new songs, so they're spread evenly
+            // and the ones you haven't heard lately still come first.
+            var upcoming = _order.Skip(_orderPos + 1).Concat(added).ToList();
+            _order.RemoveRange(_orderPos + 1, _order.Count - _orderPos - 1);
+            _order.AddRange(FreshShuffle(upcoming));
+        }
+        else
+            _order.AddRange(added);
+
+        RefreshQueue();
+        _youtube.Prefetch(PeekNext());
     }
 
     /// <summary>Rebuilds the play order so that context index <paramref name="current"/> is at _orderPos.</summary>
@@ -807,13 +975,47 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
 
         _order.Remove(current);
-        for (var i = _order.Count - 1; i > 0; i--)
-        {
-            var j = Random.Shared.Next(i + 1);
-            (_order[i], _order[j]) = (_order[j], _order[i]);
-        }
+        _order = FreshShuffle(_order);
         _order.Insert(0, current);
         _orderPos = 0;
+    }
+
+    /// <summary>
+    /// Shuffle that remembers what you've heard. A plain shuffle starts from scratch every time you press
+    /// play, so in a big playlist some songs keep coming back while others never get their turn. Here every
+    /// song gets a random draw plus a head start for how long ago it last played (from the listening
+    /// history): songs never played, or not for a long time, land near the front; what you heard recently
+    /// lands near the back. The order is still different every time.
+    /// </summary>
+    private List<int> FreshShuffle(IEnumerable<int> indices)
+    {
+        var draw = FreshDraw();
+        return indices.OrderByDescending(i => draw(_context[i])).ToList();
+    }
+
+    /// <summary>A random draw per song for <see cref="FreshShuffle"/>: sort by it, highest first.</summary>
+    private Func<Track, double> FreshDraw()
+    {
+        // How many plays ago each song was last heard (0 = the latest play).
+        var lastHeard = new Dictionary<string, int>();
+        var plays = 0;
+        foreach (var t in _history) lastHeard.TryAdd(t.Key, plays++);
+        foreach (var e in _listening.Events)
+        {
+            if (e.Seconds < 10) continue; // skipped straight away: not really heard
+            lastHeard.TryAdd(e.Key, plays++);
+        }
+        var span = Math.Max(1, plays);
+
+        // Each song is drawn once, however often the sort asks.
+        var draws = new Dictionary<Track, double>(ReferenceEqualityComparer.Instance);
+        return t =>
+        {
+            if (draws.TryGetValue(t, out var d)) return d;
+            // 0 = just heard ... 1 = never heard (or longer ago than the history goes back).
+            var age = lastHeard.TryGetValue(t.Key, out var ago) ? (double)ago / span : 1.0;
+            return draws[t] = age + Random.Shared.NextDouble() * 0.6;
+        };
     }
     private async Task PlayTrackAsync(Track track)
     {
@@ -930,9 +1132,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             _orderPos++;
         else if (Repeat == RepeatMode.All || manual)
             _orderPos = 0;
+        else if (ExtendWithRadio())
+            _orderPos++;
         else
         {
-            // End of the list.
+            // End of the list and nothing recommended to carry on with.
             _player.Stop();
             IsPlaying = false;
             PositionSeconds = 0;
@@ -940,6 +1144,43 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
         return PlayTrackAsync(_context[_order[_orderPos]]);
     }
+
+    private bool _radioExhausted;
+
+    /// <summary>
+    /// The playlist finished and repeat is off: keep the music going with recommended songs (autoplay),
+    /// drawn from Home's picks. Appends a shuffled batch of fresh songs to the end of the play order.
+    /// Returns false when there's nothing new to recommend, so playback stops cleanly.
+    /// </summary>
+    private bool ExtendWithRadio()
+    {
+        if (_radioExhausted) return false;
+
+        var seen = _context.Select(t => t.Key).Concat(_history.Select(t => t.Key)).ToHashSet();
+        var pool = RecommendedPool().Where(t => seen.Add(t.Key)).ToList();
+        if (pool.Count == 0) { _radioExhausted = true; return false; }
+
+        for (var i = pool.Count - 1; i > 0; i--)
+        {
+            var j = Random.Shared.Next(i + 1);
+            (pool[i], pool[j]) = (pool[j], pool[i]);
+        }
+
+        foreach (var t in pool.Take(QueuePageSize))
+        {
+            t.IsLiked = _liked.Contains(t);
+            _context.Add(t);
+            _order.Add(_context.Count - 1);
+        }
+        StatusText = "Playlist finished — playing songs picked for you.";
+        return true;
+    }
+
+    /// <summary>Recommended songs to draw autoplay radio from: everything Home has surfaced for you.</summary>
+    private List<Track> RecommendedPool() =>
+        HomeSections.SelectMany(s => s.Items)
+                    .SelectMany(i => i.Tracks ?? Enumerable.Empty<Track>())
+                    .ToList();
 
     [RelayCommand]
     private Task PreviousAsync()
@@ -1065,5 +1306,6 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         SaveSettings();
         _timer.Stop();
         _player.Dispose();
+        Storage.Flush(); // session and listening history are written in the background
     }
 }

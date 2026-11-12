@@ -133,6 +133,43 @@ public sealed partial class MainViewModel
         return Task.CompletedTask;
     }
 
+    /// <summary>
+    /// The songs behind a Home tile, without opening it: the song itself, a mix's songs, an album's songs
+    /// or an artist's popular songs (those two are fetched). Null if they couldn't be loaded.
+    /// </summary>
+    public async Task<List<Track>?> HomeItemTracksAsync(HomeItem item)
+    {
+        try
+        {
+            switch (item.Kind)
+            {
+                case HomeItemKind.Track when item.Tracks != null && item.Index < item.Tracks.Count:
+                    return [item.Tracks[item.Index]];
+                case HomeItemKind.Mix when item.Tracks != null:
+                    return item.Tracks.ToList();
+                case HomeItemKind.Album when item.Id != null:
+                    StatusText = $"Loading “{item.Title}”…";
+                    var album = (await _spotify.GetAsync("album", item.Id, CancellationToken.None)).Tracks;
+                    StatusText = "";
+                    return album;
+                case HomeItemKind.Artist when item.Id != null:
+                    StatusText = $"Loading “{item.Title}”…";
+                    var page = await _artists.GetArtistAsync(item.Id, CancellationToken.None)
+                               ?? throw new InvalidOperationException("Spotify didn't answer");
+                    _artists.Save();
+                    var songs = page.TopTracks.Select(t => t.ToTrack()).ToList();
+                    await _covers.FillAsync(songs, CancellationToken.None);
+                    StatusText = "";
+                    return songs;
+            }
+        }
+        catch (Exception ex)
+        {
+            StatusText = $"Couldn't load “{item.Title}”: {ex.Message}";
+        }
+        return null;
+    }
+
     /// <summary>An artist's popular songs, with who fans also like underneath.</summary>
     private Task OpenArtistAsync(string id)
     {

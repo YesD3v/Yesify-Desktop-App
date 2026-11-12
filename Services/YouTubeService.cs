@@ -24,8 +24,7 @@ public sealed class YouTubeService
     public const long MaxCacheBytes = 100L * 1024 * 1024;
     private const string StatsFile = "audio-cache.json";
 
-    private static readonly string CacheDir =
-        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Yesify", "cache");
+    private static readonly string CacheDir = Path.Combine(Storage.LocalDir, "cache");
 
     private static readonly string[] Unwanted =
         ["live", "cover", "karaoke", "remix", "sped up", "slowed", "nightcore", "8d", "instrumental", "reaction", "acoustic", "1 hour", "loop",
@@ -183,7 +182,7 @@ public sealed class YouTubeService
         if (track == null) return;
         _ = Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(5));
+            await Task.Delay(TimeSpan.FromSeconds(2));
             if (generation != _prefetchGeneration) return; // another song started or the queue changed
             try { await GetAudioFileAsync(track, CancellationToken.None); } catch { /* best effort */ }
         });

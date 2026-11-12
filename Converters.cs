@@ -87,6 +87,13 @@ public sealed class ZeroToVisibilityConverter : IValueConverter
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
 }
 
+/// <summary>Visible when a count is greater than zero.</summary>
+public sealed class CountToVisibilityConverter : IValueConverter
+{
+    public object Convert(object? value, Type t, object? p, CultureInfo c) => value is int n && n > 0 ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
+}
+
 /// <summary>Background of a tab pill: highlighted when its tab is active.</summary>
 public sealed class TabBackgroundConverter : IValueConverter
 {

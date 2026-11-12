@@ -16,7 +16,12 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
 - **Two looks**: Glass (the default: frosted panels over a blurred, vivid version of the artwork) and
   **Lightweight mode** (flat dark, drawn by the CPU, least memory). Switch it in Settings.
 - **Queue**: a resizable side panel (shared with Lyrics) with Up next and Recently played. Drag songs
-  to reorder. Right-click a song for Play next or Add to queue. The queue is saved between sessions.
+  to reorder. The queue is saved between sessions.
+- **Right-click anything**: songs, playlists, albums, mixes and artists (on Home, in the Library, in
+  the queue and in the player bar) all have Play next, Add to queue (in order or shuffled) and Add to
+  playlist.
+- **Shuffle that remembers**: songs you haven't heard lately come first, so a big playlist doesn't
+  keep repeating the same songs.
 - **Synced lyrics**, matched to the exact length of the audio playing: word-by-word timing from NetEase
   Cloud Music's public lyrics when available, otherwise line timing from [LRCLIB](https://lrclib.net).
   Click a line to jump to it.

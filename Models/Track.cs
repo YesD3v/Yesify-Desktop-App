@@ -25,7 +25,9 @@ public sealed partial class Track : ObservableObject
     private bool _isLiked;
 
     // Row number in the list currently on screen.
-    [JsonIgnore] public int Number { get; set; }
+    [ObservableProperty]
+    [property: JsonIgnore]
+    private int _number;
 
     [JsonIgnore] public string DurationText => Format(Duration);
 

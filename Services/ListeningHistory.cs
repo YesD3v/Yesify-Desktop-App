@@ -26,12 +26,12 @@ public sealed class ListeningHistory
         _events.Insert(0, new ListenEvent(track.Key, track.SpotifyId, track.Title, track.Artist, track.ImageUrl,
                                           DateTime.UtcNow, Math.Round(fraction, 3), Math.Round(listened.TotalSeconds)));
         if (_events.Count > Cap) _events.RemoveRange(Cap, _events.Count - Cap);
-        try { Storage.Save(FileName, _events); } catch { /* history only */ }
+        Storage.SaveInBackground(FileName, _events.ToList());
     }
 
     public void Clear()
     {
         _events.Clear();
-        try { Storage.Save(FileName, _events); } catch { /* history only */ }
+        Storage.SaveInBackground(FileName, _events.ToList());
     }
 }

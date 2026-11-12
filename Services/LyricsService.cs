@@ -44,11 +44,92 @@ public sealed partial class LyricsService
 
         // Word timing is unforgiving: only use it when NetEase's version is the same length as our audio
         // (within 1 s).
-        if (words is { Count: > 0 } && lengthDiff <= TimeSpan.FromSeconds(1)) return words;
+        if (words is { Count: > 0 } && lengthDiff <= TimeSpan.FromSeconds(1)) return Clean(words);
 
-        if (lrclibSynced) return lrclib;
-        if (lines is { Count: > 0 }) return lines; // line-timed beats unsynced
-        return lrclib;
+        if (lrclibSynced) return Clean(lrclib);
+        if (lines is { Count: > 0 }) return Clean(lines); // line-timed beats unsynced
+        return Clean(lrclib);
+    }
+
+    // ---------------------------------------------------------------- tidying up
+
+    // Lyric sites leave their own notes in the text. None of it is sung, so none of it is shown:
+    // a whole line that is a tag ("[Verse 1: Common]", "<Sample: ...>"),
+    [GeneratedRegex(@"^\s*[\[<{\u3010].*[\]>}\u3011]\s*$")]
+    private static partial Regex TagLine();
+
+    // a section or credit label ("Intro: Chance The Rapper", "(Verse 2: Jamie Foxx)", "Producers:..."),
+    [GeneratedRegex(@"^\s*\(?\s*(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude|skit|break|instrumental|sample|spoken|producers?|writers?|composers?|lyricists?|arrangers?|engineers?|vocals?|produced by|written by|composed by|arranged by|mixed by|mastered by|recorded by|lyrics by|music by|published by)\b[^:\uFF1A]{0,40}[:\uFF1A].*$", RegexOptions.IgnoreCase)]
+    private static partial Regex LabelLine();
+
+    // who sings next, in brackets ("(Kanye West (John Legend):)"),
+    [GeneratedRegex(@"^\s*\(.*[:\uFF1A]\s*\)\s*$")]
+    private static partial Regex SpeakerLine();
+
+    // initials in front of a line ("K/S:Throw your hands"),
+    [GeneratedRegex(@"^\s*[A-Z]{1,2}(/[A-Z]{1,2})*[:\uFF1A]\s*(?=\S)")]
+    private static partial Regex SpeakerPrefix();
+
+    // and notes inside a line ("[?]", "[x2]").
+    [GeneratedRegex(@"\s*[\[\u3010][^\]\u3011]*[\]\u3011]")]
+    private static partial Regex InlineTag();
+
+    [GeneratedRegex(@"\s{2,}")]
+    private static partial Regex Spaces();
+
+    private static List<LyricLine> Clean(List<LyricLine> lines)
+    {
+        var result = new List<LyricLine>(lines.Count);
+        foreach (var line in lines)
+        {
+            if (line.IsBreak)
+            {
+                result.Add(line);
+                continue;
+            }
+            var text = WebUtility.HtmlDecode(line.Text);
+            if (TagLine().IsMatch(text) || LabelLine().IsMatch(text) || SpeakerLine().IsMatch(text)) continue;
+
+            var tidy = Spaces().Replace(InlineTag().Replace(SpeakerPrefix().Replace(text, ""), "").Replace("()", ""), " ").Trim();
+            if (tidy == line.Text)
+            {
+                result.Add(line);
+                continue;
+            }
+            if (tidy.Length == 0 && line.Text.Trim().Length > 0) continue; // nothing left but notes
+            result.Add(line with { Text = tidy, Words = CleanWords(line.Words) });
+        }
+
+        // Unsynced lyrics separate verses with blank lines; removing a header can leave two in a row.
+        for (var i = result.Count - 1; i >= 0; i--)
+        {
+            var blank = result[i] is { IsBreak: false, Time: null } l && l.Text.Length == 0;
+            if (blank && (i == 0 || i == result.Count - 1 || result[i - 1] is { Time: null, Text.Length: 0 })) result.RemoveAt(i);
+        }
+        return result;
+    }
+
+    /// <summary>The same tidying for a line's words, which keep their timing.</summary>
+    private static List<LyricWord> CleanWords(IReadOnlyList<LyricWord> words)
+    {
+        var result = new List<LyricWord>(words.Count);
+        var depth = 0; // inside [ ... ], which can span several words
+        var kept = new System.Text.StringBuilder();
+        foreach (var w in words)
+        {
+            kept.Clear();
+            foreach (var ch in WebUtility.HtmlDecode(w.Text))
+            {
+                if (ch is '[' or '\u3010') depth++;
+                else if (ch is ']' or '\u3011') depth = Math.Max(0, depth - 1);
+                else if (depth == 0) kept.Append(ch);
+            }
+            var text = kept.ToString();
+            if (result.Count == 0) text = SpeakerPrefix().Replace(text, "");
+            if (text.Trim().Trim('(', ')').Length == 0) continue; // only notes (or the brackets around them)
+            result.Add(w with { Text = text });
+        }
+        return result;
     }
 
     private static async Task<T> Quietly<T>(Func<Task<T>> work, T fallback)

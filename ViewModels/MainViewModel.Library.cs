@@ -221,6 +221,10 @@ public sealed partial class MainViewModel
     /// <summary>Everything shown in the open view (album, playlist, Liked Songs, search results).</summary>
     public IReadOnlyList<Track> ShownTracks => Tracks.ToList();
 
+    /// <summary>Queues everything in the open view (album, playlist, mix, Liked Songs, search results).</summary>
+    public void QueueView(bool shuffled, bool next = false) =>
+        QueueAll(Tracks.ToList(), shuffled, CurrentView == ViewMode.Collection && ViewTitle.Length > 0 ? ViewTitle : null, next);
+
     /// <summary>"Copy to New Playlist": the open album/playlist with its title, description and artwork.</summary>
     public void CopyViewToNewPlaylist()
     {

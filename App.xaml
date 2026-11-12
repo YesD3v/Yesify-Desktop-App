@@ -57,6 +57,7 @@
             <local:SidebarLabelOpacityConverter x:Key="SidebarLabelOpacity" />
             <local:PercentConverter x:Key="Percent" />
             <local:ZeroToVisibilityConverter x:Key="ZeroToVis" />
+            <local:CountToVisibilityConverter x:Key="CountToVis" />
             <local:TabBackgroundConverter x:Key="TabBackground" />
 
             <!-- Flat icon / text button -->
@@ -72,13 +73,20 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="18">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="18" RenderTransformOrigin="0.5,0.5">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
                                     <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="RenderTransform">
+                                        <Setter.Value>
+                                            <ScaleTransform ScaleX="0.9" ScaleY="0.9" />
+                                        </Setter.Value>
+                                    </Setter>
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.4" />
@@ -181,6 +189,13 @@
                                     </Setter>
                                     <Setter TargetName="Shine" Property="Opacity" Value="1" />
                                 </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Body" Property="RenderTransform">
+                                        <Setter.Value>
+                                            <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
@@ -211,6 +226,9 @@
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
                                 </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.75" />
+                                </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.5" />
                                 </Trigger>
@@ -232,6 +250,9 @@
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter TargetName="Bd" Property="Background" Value="{DynamicResource AccentHoverBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="Opacity" Value="0.75" />
                                 </Trigger>
                                 <Trigger Property="IsEnabled" Value="False">
                                     <Setter Property="Opacity" Value="0.5" />
@@ -430,6 +451,24 @@
                         <Setter Property="MinHeight" Value="0" />
                     </Trigger>
                 </Style.Triggers>
+            </Style>
+
+            <!-- Tooltips: a small dark pill instead of the Windows default box. -->
+            <Style TargetType="ToolTip">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="FontFamily" Value="Segoe UI Variable Text, Segoe UI" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="FontWeight" Value="Normal" />
+                <Setter Property="HasDropShadow" Value="False" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="ToolTip">
+                            <Border Background="#F21A1A20" BorderBrush="#33FFFFFF" BorderThickness="1" CornerRadius="6" Padding="9,5">
+                                <ContentPresenter />
+                            </Border>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
             </Style>
 
             <!-- Menus: near-opaque dark (glass stays readable), with submenus ("Add to Playlist ▸"). -->

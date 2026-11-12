@@ -23,7 +23,7 @@
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
-                        <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="8,6">
+                        <Border x:Name="Bd" Background="Transparent" CornerRadius="8" Padding="8,6">
                             <ContentPresenter />
                         </Border>
                         <ControlTemplate.Triggers>
@@ -56,7 +56,8 @@
 
         <!-- Queue panel row -->
         <DataTemplate x:Key="QueueRow" DataType="{x:Type m:QueueItem}">
-            <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="6" Cursor="Hand" RenderTransformOrigin="0.5,0.5">
+            <Border x:Name="Bd" Background="Transparent" CornerRadius="6" Padding="6" Cursor="Hand" RenderTransformOrigin="0.5,0.5"
+                    ContextMenuOpening="QueueRow_ContextMenuOpening">
                 <Border.RenderTransform>
                     <TransformGroup>
                         <ScaleTransform />
@@ -64,21 +65,7 @@
                     </TransformGroup>
                 </Border.RenderTransform>
                 <Border.ContextMenu>
-                    <ContextMenu>
-                        <MenuItem Header="Play" Click="QueueMenuPlay_Click" />
-                        <MenuItem Header="Remove from queue" Click="QueueMenuRemove_Click">
-                            <MenuItem.Style>
-                                <Style TargetType="MenuItem" BasedOn="{StaticResource {x:Type MenuItem}}">
-                                    <Setter Property="Visibility" Value="Collapsed" />
-                                    <Style.Triggers>
-                                        <DataTrigger Binding="{Binding Source}" Value="Queued">
-                                            <Setter Property="Visibility" Value="Visible" />
-                                        </DataTrigger>
-                                    </Style.Triggers>
-                                </Style>
-                            </MenuItem.Style>
-                        </MenuItem>
-                    </ContextMenu>
+                    <ContextMenu /> <!-- filled in QueueRow_ContextMenuOpening -->
                 </Border.ContextMenu>
                 <Grid>
                     <Grid.ColumnDefinitions>
@@ -86,7 +73,11 @@
                         <ColumnDefinition Width="*" />
                     </Grid.ColumnDefinitions>
                     <Border Width="40" Height="40" CornerRadius="4" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
-                        <Image local:AsyncImage.Url="{Binding Track.ImageUrl}" local:AsyncImage.Width="80" Stretch="UniformToFill" />
+                        <Grid>
+                            <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource FaintTextBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Image local:AsyncImage.Url="{Binding Track.ImageUrl}" local:AsyncImage.Width="80" Stretch="UniformToFill" />
+                        </Grid>
                     </Border>
                     <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
                         <TextBlock Text="{Binding Track.Title}" FontSize="13" TextTrimming="CharacterEllipsis" />
@@ -113,16 +104,23 @@
         <!-- ============================================================ glass backdrop
              Artwork decoded tiny and stretched (reads as a blur), tinted with its own vivid colors. -->
         <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True" Visibility="{Binding IsGlass, Converter={StaticResource BoolToVis}}">
-            <Image x:Name="BackA" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
-                <Image.Effect>
-                    <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
-                </Image.Effect>
-            </Image>
-            <Image x:Name="BackB" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
-                <Image.Effect>
-                    <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
-                </Image.Effect>
-            </Image>
+            <!-- The blurred artwork is kept as a half-size bitmap: without the cache, the two full-window blurs
+                 are recomputed on every frame that anything above them changes (lyrics, the seek bar). -->
+            <Grid>
+                <Grid.CacheMode>
+                    <BitmapCache RenderAtScale="0.5" EnableClearType="False" />
+                </Grid.CacheMode>
+                <Image x:Name="BackA" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
+                    <Image.Effect>
+                        <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
+                    </Image.Effect>
+                </Image>
+                <Image x:Name="BackB" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
+                    <Image.Effect>
+                        <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
+                    </Image.Effect>
+                </Image>
+            </Grid>
             <Rectangle Opacity="0.55">
                 <Rectangle.Fill>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
@@ -231,7 +229,10 @@
                 <!-- main: the header is the list's first row, so it scrolls with the songs -->
                 <Border Grid.Column="1" CornerRadius="10" ClipToBounds="True" Background="{DynamicResource MainPanelBrush}"
                         BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
-                    <Grid>
+                    <Grid x:Name="MainContent">
+                    <Grid.RenderTransform>
+                        <TranslateTransform />
+                    </Grid.RenderTransform>
                     <Grid.RowDefinitions>
                         <RowDefinition Height="Auto" />
                         <RowDefinition Height="*" />
@@ -266,7 +267,11 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Button Width="184" Margin="0,0,4,0" Cursor="Hand" Foreground="{StaticResource TextBrush}" Click="HomeTile_Click" ToolTip="{Binding Title}">
+                                                        <Button Width="184" Margin="0,0,4,0" Cursor="Hand" Foreground="{StaticResource TextBrush}" Click="HomeTile_Click" ToolTip="{Binding Title}"
+                                                                ContextMenuOpening="HomeTile_ContextMenuOpening">
+                                                            <Button.ContextMenu>
+                                                                <ContextMenu /> <!-- filled in HomeTile_ContextMenuOpening -->
+                                                            </Button.ContextMenu>
                                                             <Button.Template>
                                                                 <ControlTemplate TargetType="Button">
                                                                     <Border x:Name="Bd" Background="Transparent" CornerRadius="10" Padding="8">
@@ -459,7 +464,7 @@
                                                 </Button.Style>
                                             </Button>
                                             <Button Style="{StaticResource IconButton}" Content="&#xE712;" FontSize="18" Width="44" Height="44" Margin="4,0,0,0"
-                                                    ToolTip="More" Click="HeaderMore_Click" Visibility="{Binding HasHeaderMenu, Converter={StaticResource BoolToVis}}" />
+                                                    ToolTip="More" Click="HeaderMore_Click" Visibility="{Binding HasTracks, Converter={StaticResource BoolToVis}}" />
                                             <TextBlock Text="Loading…" Margin="16,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubtleTextBrush}"
                                                        Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
                                         </StackPanel>
@@ -472,26 +477,43 @@
                                 <Grid>
                                     <Grid.ColumnDefinitions>
                                         <ColumnDefinition Width="36" />
+                                        <ColumnDefinition Width="48" />
                                         <ColumnDefinition Width="5*" />
                                         <ColumnDefinition Width="3*" />
                                         <ColumnDefinition Width="56" />
-                                        <ColumnDefinition Width="40" />
+                                        <ColumnDefinition Width="44" />
                                     </Grid.ColumnDefinitions>
                                     <TextBlock x:Name="Num" Text="{Binding Number}" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" HorizontalAlignment="Center" />
-                                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="8,0,16,0">
-                                        <Border Width="40" Height="40" CornerRadius="4" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
+                                    <!-- hovering a row turns its number into a play button -->
+                                    <Button x:Name="PlayHint" Style="{StaticResource IconButton}" Content="&#xE768;" FontSize="13" Width="28" Height="28" Visibility="Collapsed"
+                                            Foreground="{StaticResource TextBrush}" ToolTip="Play"
+                                            Command="{Binding DataContext.PlayFromCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
+                                    <Border Grid.Column="1" Width="40" Height="40" CornerRadius="5" Background="{DynamicResource RaisedBrush}" ClipToBounds="True" HorizontalAlignment="Right">
+                                        <Grid>
+                                            <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="15" Foreground="{DynamicResource FaintTextBrush}"
+                                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             <Image local:AsyncImage.Url="{Binding ImageUrl}" local:AsyncImage.Width="80" Stretch="UniformToFill" />
-                                        </Border>
-                                        <StackPanel Margin="12,0,0,0" VerticalAlignment="Center">
-                                            <TextBlock x:Name="Title" Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
-                                            <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
-                                        </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                    <!-- a Grid cell (not a horizontal StackPanel) so long titles end in "…" instead of running under the next column -->
+                                    <StackPanel Grid.Column="2" Margin="12,0,16,0" VerticalAlignment="Center">
+                                        <TextBlock x:Name="Title" Text="{Binding Title}" FontSize="14" TextTrimming="CharacterEllipsis" />
+                                        <DockPanel Margin="0,2,0,0">
+                                            <Border x:Name="Explicit" DockPanel.Dock="Left" Visibility="Collapsed" Width="14" Height="14" CornerRadius="2.5" Margin="0,0,6,0"
+                                                    Background="{DynamicResource InactiveIconBrush}" VerticalAlignment="Center" ToolTip="Explicit">
+                                                <TextBlock Text="E" FontSize="9" FontWeight="Bold" Foreground="#FF101016" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" />
+                                        </DockPanel>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="2" Text="{Binding Album}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0" />
-                                    <Button Grid.Column="3" Style="{StaticResource HeartButton}" Command="{Binding DataContext.ToggleLikeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
-                                    <TextBlock Grid.Column="4" Text="{Binding DurationText}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" HorizontalAlignment="Right" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Album}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <Button Grid.Column="4" Style="{StaticResource HeartButton}" Command="{Binding DataContext.ToggleLikeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
+                                    <TextBlock Grid.Column="5" Text="{Binding DurationText}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0" />
                                 </Grid>
                                 <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding IsExplicit}" Value="True">
+                                        <Setter TargetName="Explicit" Property="Visibility" Value="Visible" />
+                                    </DataTrigger>
                                     <DataTrigger Value="True">
                                         <DataTrigger.Binding>
                                             <MultiBinding Converter="{StaticResource SameObject}">
@@ -504,6 +526,10 @@
                                         <Setter TargetName="Num" Property="Foreground" Value="{DynamicResource AccentBrush}" />
                                         <Setter TargetName="Num" Property="FontFamily" Value="{StaticResource IconFont}" />
                                         <Setter TargetName="Num" Property="Text" Value="&#xE995;" />
+                                    </DataTrigger>
+                                    <DataTrigger Binding="{Binding IsMouseOver, RelativeSource={RelativeSource AncestorType=ListBoxItem}}" Value="True">
+                                        <Setter TargetName="Num" Property="Visibility" Value="Hidden" />
+                                        <Setter TargetName="PlayHint" Property="Visibility" Value="Visible" />
                                     </DataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
@@ -581,21 +607,35 @@
 
                         <!-- queue -->
                         <ScrollViewer x:Name="QueueScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding ShowQueue, Converter={StaticResource BoolToVis}}">
-                            <StackPanel Margin="10,0,10,16">
-                                <TextBlock Text="NOW PLAYING" Style="{StaticResource SectionLabel}" Margin="6,10,0,8" />
-                                <Grid Margin="6,0" Visibility="{Binding CurrentTrack, Converter={StaticResource NullToVis}}">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="40" />
-                                        <ColumnDefinition Width="*" />
-                                    </Grid.ColumnDefinitions>
-                                    <Border Width="40" Height="40" CornerRadius="4" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
-                                        <Image local:AsyncImage.Url="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="80" Stretch="UniformToFill" />
-                                    </Border>
-                                    <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
-                                        <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="13" Foreground="{DynamicResource AccentBrush}" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
-                                    </StackPanel>
-                                </Grid>
+                            <StackPanel x:Name="QueueContent" Margin="10,0,10,16">
+                                <!-- Recently played sits above Now playing: scroll up to see it. -->
+                                <StackPanel x:Name="HistorySection" Visibility="{Binding HistoryView.Count, Converter={StaticResource CountToVis}}">
+                                    <TextBlock Text="RECENTLY PLAYED" Style="{StaticResource SectionLabel}" Margin="6,10,0,8" />
+                                    <ItemsControl x:Name="HistoryList" ItemsSource="{Binding HistoryView}" ItemTemplate="{StaticResource QueueRow}"
+                                                  MouseLeftButtonUp="HistoryList_MouseUp" />
+                                </StackPanel>
+
+                                <!-- Now playing is scrolled to the top of the panel by default. -->
+                                <StackPanel x:Name="NowPlayingBlock">
+                                    <TextBlock Text="NOW PLAYING" Style="{StaticResource SectionLabel}" Margin="6,10,0,8" />
+                                    <Grid Margin="6,0" Background="Transparent" Visibility="{Binding CurrentTrack, Converter={StaticResource NullToVis}}"
+                                          ContextMenuOpening="NowPlaying_ContextMenuOpening">
+                                        <Grid.ContextMenu>
+                                            <ContextMenu /> <!-- filled in NowPlaying_ContextMenuOpening -->
+                                        </Grid.ContextMenu>
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="40" />
+                                            <ColumnDefinition Width="*" />
+                                        </Grid.ColumnDefinitions>
+                                        <Border Width="40" Height="40" CornerRadius="4" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
+                                            <Image local:AsyncImage.Url="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="80" Stretch="UniformToFill" />
+                                        </Border>
+                                        <StackPanel Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="13" Foreground="{DynamicResource AccentBrush}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,2,0,0" />
+                                        </StackPanel>
+                                    </Grid>
+                                </StackPanel>
 
                                 <TextBlock Text="UP NEXT" Style="{StaticResource SectionLabel}" />
                                 <TextBlock Text="Nothing queued. Right-click a song → Play next or Add to queue." FontSize="12" TextWrapping="Wrap"
@@ -604,12 +644,9 @@
                                 <ItemsControl x:Name="UpNextList" ItemsSource="{Binding UpNextView}" ItemTemplate="{StaticResource QueueRow}"
                                               PreviewMouseLeftButtonDown="UpNext_MouseDown" PreviewMouseMove="UpNext_MouseMove"
                                               PreviewMouseLeftButtonUp="UpNext_MouseUp" LostMouseCapture="UpNext_LostCapture" />
-
-                                <TextBlock Text="RECENTLY PLAYED" Style="{StaticResource SectionLabel}" />
-                                <TextBlock Text="Songs you play show up here." FontSize="12" Foreground="{DynamicResource FaintTextBrush}" Margin="6,0"
-                                           Visibility="{Binding HistoryView.Count, Converter={StaticResource ZeroToVis}}" />
-                                <ItemsControl x:Name="HistoryList" ItemsSource="{Binding HistoryView}" ItemTemplate="{StaticResource QueueRow}"
-                                              MouseLeftButtonUp="HistoryList_MouseUp" />
+                                <Button Content="Show more" Style="{StaticResource PillButton}" HorizontalAlignment="Left" Margin="6,8,0,0" Padding="14,6"
+                                        Command="{Binding ShowMoreQueueCommand}"
+                                        Visibility="{Binding HasMoreUpNext, Converter={StaticResource BoolToVis}}" />
                             </StackPanel>
                         </ScrollViewer>
                     </Grid>
@@ -625,10 +662,18 @@
                 </Grid.ColumnDefinitions>
 
                 <!-- now playing -->
-                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center"
-                            Visibility="{Binding CurrentTrack, Converter={StaticResource NullToVis}}">
+                <StackPanel Grid.Column="0" Orientation="Horizontal" VerticalAlignment="Center" Background="Transparent"
+                            Visibility="{Binding CurrentTrack, Converter={StaticResource NullToVis}}"
+                            ContextMenuOpening="NowPlaying_ContextMenuOpening">
+                    <StackPanel.ContextMenu>
+                        <ContextMenu /> <!-- filled in NowPlaying_ContextMenuOpening -->
+                    </StackPanel.ContextMenu>
                     <Border Width="56" Height="56" CornerRadius="6" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
-                        <Image local:AsyncImage.Url="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="112" Stretch="UniformToFill" />
+                        <Grid>
+                            <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="20" Foreground="{DynamicResource FaintTextBrush}"
+                                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            <Image local:AsyncImage.Url="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="112" Stretch="UniformToFill" />
+                        </Grid>
                     </Border>
                     <StackPanel Margin="14,0,0,0" VerticalAlignment="Center" MaxWidth="260">
                         <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
@@ -641,7 +686,7 @@
                 <!-- transport -->
                 <StackPanel Grid.Column="1" VerticalAlignment="Center" MaxWidth="640">
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button Style="{StaticResource IconButton}" Content="&#xE8B1;" Command="{Binding ToggleShuffleCommand}" ToolTip="Shuffle"
+                        <Button Style="{StaticResource IconButton}" Content="&#xE8B1;" Command="{Binding ToggleShuffleCommand}" ToolTip="Shuffle (songs you haven't heard lately come first)"
                                 Foreground="{Binding Shuffle, Converter={StaticResource ActiveBrush}}" />
                         <Button Style="{StaticResource IconButton}" Content="&#xE892;" Command="{Binding PreviousCommand}" Margin="8,0,0,0" ToolTip="Previous" />
                         <Grid Margin="12,0">
@@ -710,6 +755,29 @@
             <Border Grid.Row="1" HorizontalAlignment="Center" VerticalAlignment="Bottom" Margin="0,0,0,12" Padding="16,10" CornerRadius="8"
                     Background="{DynamicResource ToastBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1" MaxWidth="640" Visibility="{Binding StatusText, Converter={StaticResource NullToVis}}"
                     MouseLeftButtonUp="Status_Click" Cursor="Hand">
+                <Border.RenderTransform>
+                    <TranslateTransform />
+                </Border.RenderTransform>
+                <Border.Style>
+                    <Style TargetType="Border">
+                        <Style.Triggers>
+                            <Trigger Property="Visibility" Value="Visible">
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetProperty="Opacity" From="0" To="1" Duration="0:0:0.18" />
+                                            <DoubleAnimation Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.Y)" From="10" To="0" Duration="0:0:0.22">
+                                                <DoubleAnimation.EasingFunction>
+                                                    <CubicEase EasingMode="EaseOut" />
+                                                </DoubleAnimation.EasingFunction>
+                                            </DoubleAnimation>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                            </Trigger>
+                        </Style.Triggers>
+                    </Style>
+                </Border.Style>
                 <TextBlock Text="{Binding StatusText}" TextWrapping="Wrap" FontSize="13" />
             </Border>
         </Grid>
@@ -867,21 +935,29 @@
 
                     <TextBlock Text="STORAGE" Style="{StaticResource SectionLabel}" Margin="0,24,0,10" />
                     <Grid>
-                        <StackPanel VerticalAlignment="Center">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Text="Downloaded audio" FontSize="14" />
-                            <TextBlock FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0">
+                            <TextBlock FontSize="12" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap">
                                 <Run Text="{Binding CacheSizeText, Mode=OneWay}" /><Run Text=" · keeps the songs you play most and the next one up" />
                             </TextBlock>
                         </StackPanel>
-                        <Button Style="{StaticResource PillButton}" Content="Clear" HorizontalAlignment="Right" Command="{Binding ClearAudioCacheCommand}" />
+                        <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Clear" VerticalAlignment="Center" Command="{Binding ClearAudioCacheCommand}" />
                     </Grid>
                     <Grid Margin="0,14,0,0">
-                        <StackPanel VerticalAlignment="Center" Margin="0,0,90,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
                             <TextBlock Text="Listening history" FontSize="14" />
-                            <TextBlock FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap"
-                                       Text="What you play, kept on this PC to pick Home's mixes and recommendations" />
+                            <TextBlock FontSize="12" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap"
+                                       Text="What you play, kept on this PC to pick Home's mixes and keep shuffle fresh" />
                         </StackPanel>
-                        <Button Style="{StaticResource PillButton}" Content="Clear" HorizontalAlignment="Right" Command="{Binding ClearListeningHistoryCommand}" />
+                        <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Clear" VerticalAlignment="Center" Command="{Binding ClearListeningHistoryCommand}" />
                     </Grid>
 
                     <TextBlock Text="ABOUT" Style="{StaticResource SectionLabel}" Margin="0,24,0,10" />

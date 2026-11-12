@@ -224,7 +224,15 @@ public sealed partial class SpotifyEmbedService
     {
         var p = uri.Split(':');
         if (p.Length < 6) return null;
-        static string D(string s) => Uri.UnescapeDataString(s.Replace('+', ' '));
+        // Local files carry whatever was typed into their tags; drop a bracket left without its partner
+        // ("Kanye West, Kid Cudi, John Legend)").
+        static string D(string s)
+        {
+            s = Uri.UnescapeDataString(s.Replace('+', ' ')).Trim();
+            while (s.EndsWith(')') && s.Count(c => c == ')') > s.Count(c => c == '(')) s = s[..^1].TrimEnd();
+            while (s.StartsWith('(') && s.Count(c => c == '(') > s.Count(c => c == ')')) s = s[1..].TrimStart();
+            return s;
+        }
         var title = D(p[4]);
         if (title.Length == 0) return null;
         return new Track

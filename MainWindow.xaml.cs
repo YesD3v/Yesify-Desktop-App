@@ -5,6 +5,7 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using Yesify.Models;
 using Yesify.Services;
 using Yesify.ViewModels;
@@ -110,13 +111,31 @@ public partial class MainWindow : Window, IFrostSource
             case nameof(MainViewModel.IsRightPanelOpen):
                 UpdateRightPanel();
                 break;
+            case nameof(MainViewModel.ShowQueue):
+            case nameof(MainViewModel.CurrentTrack):
+                ScrollQueueToNowPlaying();
+                break;
             case nameof(MainViewModel.BackdropImageUrl):
                 _ = UpdateBackdropAsync();
                 break;
             case nameof(MainViewModel.SidebarCollapsed):
                 UpdateSidebarWidth();
                 break;
+            case nameof(MainViewModel.CurrentView):
+            case nameof(MainViewModel.ViewTitle):
+                EaseInView();
+                break;
         }
+    }
+
+    /// <summary>A new page (Home, Library, a playlist) fades and rises into place instead of snapping (glass mode).</summary>
+    private void EaseInView()
+    {
+        if (Vm.IsLightweight) return;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        MainContent.BeginAnimation(OpacityProperty, new DoubleAnimation(0.35, 1, TimeSpan.FromMilliseconds(200)));
+        if (MainContent.RenderTransform is TranslateTransform { IsFrozen: false } move)
+            move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease });
     }
 
     // ---------------------------------------------------------------- glass backdrop
@@ -254,16 +273,60 @@ public partial class MainWindow : Window, IFrostSource
     }
 
     /// <summary>"Add to Playlist ▸": New Playlist…, then your playlists and imported ones (except the one you're in).</summary>
-    private MenuItem AddToPlaylistMenu(string header, Func<List<Track>> tracks)
+    private MenuItem AddToPlaylistMenu(string header, Func<List<Track>> tracks) =>
+        AddToPlaylistMenu(header, () => Task.FromResult<List<Track>?>(tracks()));
+
+    /// <summary>The same, for songs that may have to be fetched first (an album or artist on Home, an imported playlist).</summary>
+    private MenuItem AddToPlaylistMenu(string header, Func<Task<List<Track>?>> tracks)
     {
+        // Loads the songs when an entry is clicked; nothing happens if they can't be loaded (the view model says why).
+        MenuItem Entry(string text, Action<List<Track>> act) => Item(text, async () =>
+        {
+            if (await tracks() is { Count: > 0 } songs) act(songs);
+        });
+
         var menu = new MenuItem { Header = header };
-        menu.Items.Add(Item("New Playlist…", () => Vm.BeginNewPlaylist(tracks())));
+        menu.Items.Add(Entry("New Playlist…", songs => Vm.BeginNewPlaylist(songs)));
         var targets = Vm.UserPlaylists.Where(p => p != Vm.CurrentUserPlaylist).ToList();
         var imported = Vm.ImportedPlaylists.Where(p => p.Id != Vm.CurrentCollection?.Id).ToList();
         if (targets.Count + imported.Count > 0) menu.Items.Add(new Separator());
-        foreach (var p in targets) menu.Items.Add(Item(p.Name, () => Vm.AddToPlaylist(p, tracks())));
-        foreach (var p in imported) menu.Items.Add(Item(p.Name, () => _ = Vm.AddToImportedAsync(p, tracks())));
+        foreach (var p in targets) menu.Items.Add(Entry(p.Name, songs => Vm.AddToPlaylist(p, songs)));
+        foreach (var p in imported) menu.Items.Add(Entry(p.Name, songs => _ = Vm.AddToImportedAsync(p, songs)));
         return menu;
+    }
+
+    /// <summary>
+    /// What every song's menu has, wherever the song is shown (a list, Home, the queue, the player bar):
+    /// Play Next, Add to Queue, like, Add to Playlist.
+    /// </summary>
+    private void AddSongItems(ItemCollection items, Track track)
+    {
+        items.Add(Item("Play Next", () => Vm.PlayNextCommand.Execute(track)));
+        items.Add(Item("Add to Queue", () => Vm.AddToQueueCommand.Execute(track)));
+        items.Add(new Separator());
+        items.Add(Item(Vm.IsLiked(track) ? "Remove from Liked Songs" : "Add to Liked Songs", () => Vm.ToggleLikeCommand.Execute(track)));
+        items.Add(AddToPlaylistMenu("Add to Playlist", () => [track]));
+    }
+
+    /// <summary>
+    /// What every collection's menu has (a playlist, album, mix, artist, Liked Songs), opened or not:
+    /// Play, Shuffle Play, Play Next, Add to Queue (in order or shuffled), Add to Playlist.
+    /// </summary>
+    private void AddCollectionItems(ItemCollection items, string name, Func<Task<List<Track>?>> tracks)
+    {
+        MenuItem Entry(string text, Action<List<Track>> act) => Item(text, async () =>
+        {
+            if (await tracks() is { Count: > 0 } songs) act(songs);
+        });
+
+        items.Add(Entry("Play", songs => Vm.PlayTracks(songs, shuffled: false)));
+        items.Add(Entry("Shuffle Play", songs => Vm.PlayTracks(songs, shuffled: true)));
+        items.Add(new Separator());
+        items.Add(Entry("Play Next", songs => Vm.QueueAll(songs, shuffled: false, name, next: true)));
+        items.Add(Entry("Add to Queue", songs => Vm.QueueAll(songs, shuffled: false, name)));
+        items.Add(Entry("Add to Queue, Shuffled", songs => Vm.QueueAll(songs, shuffled: true, name)));
+        items.Add(new Separator());
+        items.Add(AddToPlaylistMenu("Add to Playlist", tracks));
     }
 
     // Right-clicking a song selects it; the menu acts on the selection.
@@ -276,11 +339,7 @@ public partial class MainWindow : Window, IFrostSource
         }
         menu.Items.Clear();
         menu.Items.Add(Item("Play", () => Vm.PlayFromCommand.Execute(track)));
-        menu.Items.Add(Item("Play Next", () => Vm.PlayNextCommand.Execute(track)));
-        menu.Items.Add(Item("Add to Queue", () => Vm.AddToQueueCommand.Execute(track)));
-        menu.Items.Add(new Separator());
-        menu.Items.Add(Item(track.IsLiked ? "Remove from Liked Songs" : "Add to Liked Songs", () => Vm.ToggleLikeCommand.Execute(track)));
-        menu.Items.Add(AddToPlaylistMenu("Add to Playlist", () => [track]));
+        AddSongItems(menu.Items, track);
         if (Vm.CurrentUserPlaylist != null)
         {
             menu.Items.Add(new Separator());
@@ -288,14 +347,74 @@ public partial class MainWindow : Window, IFrostSource
         }
     }
 
+    /// <summary>Home tiles: a song gets the song menu; a mix, album or artist gets the collection menu.</summary>
+    private void HomeTile_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: Services.HomeItem item, ContextMenu: { } menu })
+        {
+            e.Handled = true;
+            return;
+        }
+        menu.Items.Clear();
+        if (item.Kind == HomeItemKind.Track)
+        {
+            if (item.Tracks == null || item.Index >= item.Tracks.Count)
+            {
+                e.Handled = true;
+                return;
+            }
+            menu.Items.Add(Item("Play", () => Vm.OpenHomeItemCommand.Execute(item)));
+            AddSongItems(menu.Items, item.Tracks[item.Index]);
+            return;
+        }
+        menu.Items.Add(Item("Open", () => Vm.OpenHomeItemCommand.Execute(item)));
+        menu.Items.Add(new Separator());
+        // Fetched at most once per menu, however many entries are clicked.
+        Task<List<Track>?>? loading = null;
+        AddCollectionItems(menu.Items, item.Title, () => loading ??= Vm.HomeItemTracksAsync(item));
+    }
+
+    /// <summary>Queue panel rows (Up next and Recently played).</summary>
+    private void QueueRow_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: QueueItem item, ContextMenu: { } menu })
+        {
+            e.Handled = true;
+            return;
+        }
+        menu.Items.Clear();
+        menu.Items.Add(Item("Play", () => Vm.PlayQueueItemCommand.Execute(item)));
+        AddSongItems(menu.Items, item.Track);
+        if (item.Source == QueueSource.Queued)
+        {
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Remove from Queue", () => Vm.RemoveQueueItemCommand.Execute(item)));
+        }
+    }
+
+    /// <summary>The playing song, in the player bar and at the top of the queue.</summary>
+    private void NowPlaying_ContextMenuOpening(object sender, ContextMenuEventArgs e)
+    {
+        if (Vm.CurrentTrack is not { } track || sender is not FrameworkElement { ContextMenu: { } menu })
+        {
+            e.Handled = true;
+            return;
+        }
+        menu.Items.Clear();
+        AddSongItems(menu.Items, track);
+    }
+
     /// <summary>"…" on an album / playlist / Liked Songs: everything in it goes somewhere.</summary>
     private void HeaderMore_Click(object sender, RoutedEventArgs e)
     {
         var menu = new ContextMenu { PlacementTarget = (UIElement)sender, Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom };
         var all = Vm.ShownTracks.ToList();
+        menu.Items.Add(Item("Play Next", () => Vm.QueueView(shuffled: false, next: true), all.Count > 0));
+        menu.Items.Add(Item("Add to Queue", () => Vm.QueueView(shuffled: false), all.Count > 0));
+        menu.Items.Add(Item("Add to Queue, Shuffled", () => Vm.QueueView(shuffled: true), all.Count > 0));
+        menu.Items.Add(new Separator());
         menu.Items.Add(AddToPlaylistMenu("Add All to Playlist", () => all));
         menu.Items.Add(Item("Copy to New Playlist…", Vm.CopyViewToNewPlaylist, all.Count > 0));
-        menu.Items.Add(Item("Add All to Queue", () => { foreach (var t in all) Vm.AddToQueueCommand.Execute(t); }, all.Count > 0));
         if (Vm.CurrentUserPlaylist is { } p)
         {
             menu.Items.Add(new Separator());
@@ -332,22 +451,33 @@ public partial class MainWindow : Window, IFrostSource
     {
         if (sender is not FrameworkElement { DataContext: LibraryItem item, ContextMenu: { } menu }) return;
         menu.Items.Clear();
+        // Fetched at most once per menu, however many entries are clicked.
+        Task<List<Track>?>? loading = null;
+        void AddCollection()
+        {
+            menu.Items.Add(Item("Open", () => Vm.OpenLibraryItemCommand.Execute(item)));
+            menu.Items.Add(new Separator());
+            AddCollectionItems(menu.Items, item.Title, () => loading ??= Vm.LibraryItemTracksAsync(item));
+        }
         switch (item.Kind)
         {
+            case LibraryItemKind.Liked:
+                AddCollection();
+                break;
             case LibraryItemKind.UserPlaylist when Vm.UserPlaylists.FirstOrDefault(p => p.Id == item.Id) is { } p:
-                menu.Items.Add(Item("Open", () => Vm.OpenLibraryItemCommand.Execute(item)));
-                menu.Items.Add(Item("Edit Details…", () => Vm.BeginEditPlaylist(p)));
+                AddCollection();
                 menu.Items.Add(new Separator());
+                menu.Items.Add(Item("Edit Details…", () => Vm.BeginEditPlaylist(p)));
                 menu.Items.Add(Item("Delete Playlist", () => ConfirmDelete(p)));
                 break;
             case LibraryItemKind.Saved when item.Saved != null:
-                menu.Items.Add(Item("Open", () => Vm.OpenLibraryItemCommand.Execute(item)));
-                menu.Items.Add(Item("Edit…", () => _ = Vm.EditImportedAsync(item.Saved)));
+                AddCollection();
                 menu.Items.Add(new Separator());
+                menu.Items.Add(Item("Edit…", () => _ = Vm.EditImportedAsync(item.Saved)));
                 menu.Items.Add(Item("Remove from Library", () => Vm.RemoveSavedCommand.Execute(item.Saved)));
                 break;
             default:
-                e.Handled = true; // Liked Songs / New / Import: nothing to manage
+                e.Handled = true; // New / Import: nothing to manage
                 break;
         }
     }
@@ -405,6 +535,19 @@ public partial class MainWindow : Window, IFrostSource
     private void HistoryList_MouseUp(object sender, MouseButtonEventArgs e)
     {
         if (ItemAt(e.OriginalSource) is { } item) Vm.PlayQueueItemCommand.Execute(item);
+    }
+
+    /// <summary>Puts Now playing at the top of the queue, so Recently played sits above the fold (scroll up for it).</summary>
+    private void ScrollQueueToNowPlaying()
+    {
+        if (!Vm.ShowQueue) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
+        {
+            if (NowPlayingBlock == null || QueueContent == null || QueueScroller == null) return;
+            QueueContent.UpdateLayout();
+            var top = NowPlayingBlock.TransformToAncestor(QueueContent).Transform(new Point(0, 0)).Y;
+            QueueScroller.ScrollToVerticalOffset(top);
+        }));
     }
 
     private void UpNext_MouseDown(object sender, MouseButtonEventArgs e)
@@ -527,11 +670,6 @@ public partial class MainWindow : Window, IFrostSource
         }
         _dragRows.Clear();
     }
-    private void QueueMenuPlay_Click(object sender, RoutedEventArgs e) =>
-        Vm.PlayQueueItemCommand.Execute((sender as FrameworkElement)?.DataContext as QueueItem);
-
-    private void QueueMenuRemove_Click(object sender, RoutedEventArgs e) =>
-        Vm.RemoveQueueItemCommand.Execute((sender as FrameworkElement)?.DataContext as QueueItem);
 
     // ---------------------------------------------------------------- seek bar
 
