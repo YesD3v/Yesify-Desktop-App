@@ -38,7 +38,11 @@ public partial class MainWindow : Window, IFrostSource
         TrackList.ItemsSource = new CompositeCollection
         {
             new HeaderMarker(),
+            new TopSectionsMarker(),
             new CollectionContainer { Collection = vm.Tracks },
+            new SearchMoreMarker(), // hidden outside Search
+            new CollectionContainer { Collection = vm.SearchOnline },
+            new SectionsMarker(),
         };
 
         _lyrics = new LyricsAnimator(vm, LyricsList, LyricsScroller);
@@ -51,6 +55,10 @@ public partial class MainWindow : Window, IFrostSource
         Microsoft.Win32.SystemEvents.PowerModeChanged += OnSystemWake;
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnSystemWake;
         Vm.PropertyChanged += OnVmPropertyChanged;
+        Vm.HomeSections.CollectionChanged += OnHomeSectionsChanged;
+        Vm.Tracks.CollectionChanged += OnSongCountChanged;
+        Vm.SearchOnline.CollectionChanged += OnSongCountChanged;
+        UpdateVirtualization();
         UpdateRightPanel();
         UpdateSidebarWidth();
         _ = UpdateBackdropAsync();
@@ -91,6 +99,9 @@ public partial class MainWindow : Window, IFrostSource
     {
         // The view model lives on; unhook so it doesn't keep this window (and all its images) alive.
         Vm.PropertyChanged -= OnVmPropertyChanged;
+        Vm.HomeSections.CollectionChanged -= OnHomeSectionsChanged;
+        Vm.Tracks.CollectionChanged -= OnSongCountChanged;
+        Vm.SearchOnline.CollectionChanged -= OnSongCountChanged;
         Microsoft.Win32.SystemEvents.SessionSwitch -= OnSystemWake;
         Microsoft.Win32.SystemEvents.PowerModeChanged -= OnSystemWake;
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnSystemWake;
@@ -121,36 +132,124 @@ public partial class MainWindow : Window, IFrostSource
             case nameof(MainViewModel.SidebarCollapsed):
                 UpdateSidebarWidth();
                 break;
+            case nameof(MainViewModel.ShowPageSkeleton):
+                UpdateSkeleton();
+                break;
             case nameof(MainViewModel.CurrentView):
             case nameof(MainViewModel.ViewTitle):
-                EaseInView();
+                // A page behind the skeleton makes its entrance when it's revealed instead.
+                if (!Vm.ShowPageSkeleton && !_revealing) EaseInView();
                 break;
         }
     }
 
-    /// <summary>A new page (Home, Library, a playlist) fades and rises into place instead of snapping (glass mode).</summary>
+    private readonly System.Diagnostics.Stopwatch _skeletonClock = new();
+    private bool _revealing;
+
+    /// <summary>
+    /// The loading skeleton appears the moment a page is opened (it's always laid out, just hidden). When the
+    /// page is ready it's first laid out invisibly behind the skeleton; only then do the two cross-fade, so
+    /// building a heavy page (rows of tiles, pictures) never eats the first frames of the animation.
+    /// </summary>
+    private void UpdateSkeleton()
+    {
+        if (Vm.ShowPageSkeleton)
+        {
+            _revealing = false;
+            MainContent.BeginAnimation(OpacityProperty, null);
+            if (MainContent.RenderTransform is TranslateTransform { IsFrozen: false } stay) stay.BeginAnimation(TranslateTransform.YProperty, null);
+            PageSkeleton.Visibility = Visibility.Visible;
+            // Starts faint and settles in fast: instant to the eye, and a page that turns out to be ready a
+            // frame later (cached) doesn't flash a full skeleton.
+            PageSkeleton.BeginAnimation(OpacityProperty, new DoubleAnimation(0.3, 1, TimeSpan.FromMilliseconds(160)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            _skeletonClock.Restart();
+            return;
+        }
+        if (PageSkeleton.Visibility != Visibility.Visible) return;
+        if (_skeletonClock.ElapsedMilliseconds < 60)
+        {
+            // Ready before the skeleton was even drawn: no cross-fade, just the usual entrance.
+            HideSkeleton();
+            EaseInView();
+            return;
+        }
+
+        _revealing = true;
+        TrackList.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.Zero)); // invisible while it's built
+        Dispatcher.BeginInvoke(() =>
+        {
+            // Loaded priority runs after layout and the next render: the page is built by now.
+            _revealing = false;
+            if (Vm.ShowPageSkeleton) return; // another page started loading meanwhile
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            // While it fades and rises, the page is drawn once into a bitmap and that is moved, instead of
+            // every tile and cover being redrawn each frame.
+            TrackList.CacheMode = new BitmapCache { EnableClearType = false, RenderAtScale = VisualTreeHelper.GetDpi(this).DpiScaleX };
+            var show = new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(320)) { EasingFunction = ease };
+            TrackList.BeginAnimation(OpacityProperty, show);
+            if (TrackList.RenderTransform is not TranslateTransform { IsFrozen: false } rise)
+                TrackList.RenderTransform = rise = new TranslateTransform();
+            var lift = new DoubleAnimation(14, 0, TimeSpan.FromMilliseconds(420)) { EasingFunction = ease };
+            lift.Completed += (_, _) => TrackList.CacheMode = null; // back to live drawing (sharp text, scrolling)
+            rise.BeginAnimation(TranslateTransform.YProperty, lift);
+            var fade = new DoubleAnimation(0, TimeSpan.FromMilliseconds(220)) { EasingFunction = ease };
+            fade.Completed += (_, _) => { if (!Vm.ShowPageSkeleton) HideSkeleton(); };
+            PageSkeleton.BeginAnimation(OpacityProperty, fade);
+        }, DispatcherPriority.Loaded);
+    }
+
+    private void HideSkeleton()
+    {
+        PageSkeleton.BeginAnimation(OpacityProperty, null);
+        PageSkeleton.Opacity = 0;
+        PageSkeleton.Visibility = Visibility.Hidden; // stays laid out for next time
+        TrackList.BeginAnimation(OpacityProperty, null);
+        if (TrackList.RenderTransform is TranslateTransform { IsFrozen: false, HasAnimatedProperties: false }) TrackList.CacheMode = null;
+    }
+
+    /// <summary>A new page (Home, Library, a playlist) fades and rises into place instead of snapping.</summary>
     private void EaseInView()
     {
-        if (Vm.IsLightweight) return;
         var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
         MainContent.BeginAnimation(OpacityProperty, new DoubleAnimation(0.35, 1, TimeSpan.FromMilliseconds(200)));
         if (MainContent.RenderTransform is TranslateTransform { IsFrozen: false } move)
             move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(8, 0, TimeSpan.FromMilliseconds(260)) { EasingFunction = ease });
     }
 
+    private bool? _virtualizing;
+
+    private void OnSongCountChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => UpdateVirtualization();
+
+    /// <summary>
+    /// A short page (an artist, an album, a playlist of a few dozen songs) is laid out whole. Virtualized,
+    /// its tall rows (the header with the artwork, rows of album tiles) were torn down when scrolled out of
+    /// view and rebuilt, re-measured and their pictures reloaded when scrolled back, which made scrolling
+    /// up stutter and jump. Long lists stay virtualized so a 1,000-song playlist doesn't build every row.
+    /// </summary>
+    private void UpdateVirtualization()
+    {
+        var virtualize = Vm.Tracks.Count + Vm.SearchOnline.Count > 150;
+        if (virtualize == _virtualizing) return;
+        _virtualizing = virtualize;
+        VirtualizingPanel.SetIsVirtualizing(TrackList, virtualize);
+    }
+
+    /// <summary>Fresh picks on Home fade up into place instead of popping in.</summary>
+    private void OnHomeSectionsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
+        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Reset || !Vm.IsHomeView || !IsVisible) return;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        HomeSectionsList.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(420)) { EasingFunction = ease });
+        if (HomeSectionsList.RenderTransform is not TranslateTransform { IsFrozen: false } move)
+            HomeSectionsList.RenderTransform = move = new TranslateTransform();
+        move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(520)) { EasingFunction = ease });
+    }
+
     // ---------------------------------------------------------------- glass backdrop
 
-    /// <summary>Cross-fades to the new artwork and tints the window with its colors (glass mode only).</summary>
+    /// <summary>Cross-fades to the new artwork and tints the window with its colors.</summary>
     private async Task UpdateBackdropAsync()
     {
-        if (Vm.IsLightweight)
-        {
-            // Nothing to draw; let the images go.
-            _backdropUrl = null;
-            BackA.Source = BackB.Source = null;
-            return;
-        }
-
         var url = Vm.BackdropImageUrl;
         if (url == _backdropUrl) return;
         _backdropUrl = url;
@@ -306,6 +405,39 @@ public partial class MainWindow : Window, IFrostSource
         items.Add(new Separator());
         items.Add(Item(Vm.IsLiked(track) ? "Remove from Liked Songs" : "Add to Liked Songs", () => Vm.ToggleLikeCommand.Execute(track)));
         items.Add(AddToPlaylistMenu("Add to Playlist", () => [track]));
+        items.Add(new Separator());
+        items.Add(Item("Start Radio", () => Vm.StartRadioCommand.Execute(track)));
+        items.Add(Item("Go to Artist", () => Vm.GoToArtistCommand.Execute(track), track.Artist.Length > 0));
+        items.Add(Item("Go to Album", () => Vm.GoToAlbumCommand.Execute(track), MainViewModel.HasAlbum(track)));
+    }
+
+    // Artist and album names in song rows and the player bar open their pages.
+    private Track? LinkTrack(object sender) =>
+        (sender as FrameworkElement)?.DataContext as Track ?? Vm.CurrentTrack;
+
+    private void ArtistLink_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (LinkTrack(sender) is not { } t || t.Artist.Length == 0) return;
+        e.Handled = true;
+        Vm.GoToArtistCommand.Execute(t);
+    }
+
+    private void AlbumLink_Click(object sender, MouseButtonEventArgs e)
+    {
+        if (LinkTrack(sender) is not { } t || !MainViewModel.HasAlbum(t)) return;
+        e.Handled = true;
+        Vm.GoToAlbumCommand.Execute(t);
+    }
+
+    // The mouse's back button goes back, like a browser.
+    protected override void OnMouseUp(MouseButtonEventArgs e)
+    {
+        if (e.ChangedButton == MouseButton.XButton1 && Vm.CanGoBack)
+        {
+            Vm.GoBackCommand.Execute(null);
+            e.Handled = true;
+        }
+        base.OnMouseUp(e);
     }
 
     /// <summary>
@@ -368,10 +500,21 @@ public partial class MainWindow : Window, IFrostSource
             return;
         }
         menu.Items.Add(Item("Open", () => Vm.OpenHomeItemCommand.Execute(item)));
+        if (item.Kind == HomeItemKind.MusicCategory) return;
         menu.Items.Add(new Separator());
         // Fetched at most once per menu, however many entries are clicked.
         Task<List<Track>?>? loading = null;
         AddCollectionItems(menu.Items, item.Title, () => loading ??= Vm.HomeItemTracksAsync(item));
+        if (item.Kind == HomeItemKind.MusicArtist && item.Id is { } artistId)
+        {
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Start Artist Mix", () => _ = Vm.StartArtistRadioAsync(artistId, item.Title)));
+        }
+        if (item.Kind is HomeItemKind.MusicAlbum or HomeItemKind.MusicPlaylist)
+        {
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item(Vm.IsSaved(item) ? "In Your Library" : "Add to Library", () => Vm.SaveMusicItem(item), !Vm.IsSaved(item)));
+        }
     }
 
     /// <summary>Queue panel rows (Up next and Recently played).</summary>
@@ -415,6 +558,24 @@ public partial class MainWindow : Window, IFrostSource
         menu.Items.Add(new Separator());
         menu.Items.Add(AddToPlaylistMenu("Add All to Playlist", () => all));
         menu.Items.Add(Item("Copy to New Playlist…", Vm.CopyViewToNewPlaylist, all.Count > 0));
+        if (Vm.ViewAllSongsId != null)
+        {
+            // An artist: everything they've released, not just the top songs on the page.
+            Task<List<Track>?>? loading = null;
+            menu.Items.Add(new Separator());
+            AddCollectionItems(menu.Items, Vm.ViewTitle, () => loading ??= Vm.ViewAllSongsAsync());
+            foreach (var mi in menu.Items.OfType<MenuItem>().Skip(menu.Items.OfType<MenuItem>().Count() - 6))
+                if (mi.Header is string h) mi.Header = h switch
+                {
+                    "Play" => "Play All Their Songs",
+                    "Shuffle Play" => "Shuffle All Their Songs",
+                    "Play Next" => "Play All Their Songs Next",
+                    "Add to Queue" => "Add All Their Songs to Queue",
+                    "Add to Queue, Shuffled" => "Add All Their Songs to Queue, Shuffled",
+                    "Add to Playlist" => "Add All Their Songs to Playlist",
+                    _ => h,
+                };
+        }
         if (Vm.CurrentUserPlaylist is { } p)
         {
             menu.Items.Add(new Separator());
@@ -689,7 +850,9 @@ public partial class MainWindow : Window, IFrostSource
 
     private void Lyric_Click(object sender, MouseButtonEventArgs e)
     {
-        if (sender is FrameworkElement { DataContext: LyricLine line }) Vm.SeekToLyric(line);
+        if (sender is not FrameworkElement { DataContext: LyricLine line }) return;
+        _lyrics.Resync(); // jumping to a line follows the song again
+        Vm.SeekToLyric(line);
     }
     private void LyricWord_Loaded(object sender, RoutedEventArgs e)
     {

@@ -27,8 +27,25 @@ public sealed partial class MainViewModel
     /// <summary>The "…" menu on the header: anything with songs that can go into a playlist.</summary>
     public bool HasHeaderMenu => CurrentView == ViewMode.Collection && (CurrentCollection != null || CurrentUserPlaylist != null || ViewIsLikedHeader);
 
+    /// <summary>Glass placeholders while a page (artist, album, playlist, Explore...) loads.</summary>
+    public bool ShowPageSkeleton => IsLoading && CurrentView == ViewMode.Collection;
+
+    /// <summary>The song list, except while the skeleton stands in for it.</summary>
+    public bool ShowTrackList => IsTrackView && !ShowPageSkeleton;
+
+    partial void OnIsLoadingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(ShowPageSkeleton));
+        OnPropertyChanged(nameof(ShowTrackList));
+    }
+
     partial void OnCurrentViewChanged(ViewMode value)
     {
+        OnPropertyChanged(nameof(ShowPageSkeleton));
+        OnPropertyChanged(nameof(ShowTrackList));
+        if (value != ViewMode.Search) StopOnlineSearch(clear: true);
+        if (value is ViewMode.Home or ViewMode.Library) ResetViewExtras();
+        OnPropertyChanged(nameof(ShowSearchOnlineSection));
         OnPropertyChanged(nameof(IsHomeView));
         OnPropertyChanged(nameof(IsLibraryView));
         OnPropertyChanged(nameof(IsSearchView));
@@ -68,7 +85,7 @@ public sealed partial class MainViewModel
         foreach (var p in _library.Playlists)
             LibraryItems.Add(new LibraryItem(LibraryItemKind.UserPlaylist, p.Name, PlaylistSubtitle(p), p.DisplayCover, p.Id));
         foreach (var s in _settings.SavedCollections)
-            LibraryItems.Add(new LibraryItem(LibraryItemKind.Saved, s.Name, s.Kind == CollectionKind.Album ? $"Album · {s.Owner}" : s.Owner, s.ImageUrl, s.Id, s));
+            LibraryItems.Add(new LibraryItem(LibraryItemKind.Saved, s.Name, s.Kind is CollectionKind.Album or CollectionKind.MusicAlbum ? $"Album · {s.Owner}" : s.Owner, s.ImageUrl, s.Id, s));
         LibraryItems.Add(new LibraryItem(LibraryItemKind.NewPlaylist, "New Playlist", "", null));
         LibraryItems.Add(new LibraryItem(LibraryItemKind.Import, "Import Playlist", "Spotify or YouTube link", null));
     }
@@ -76,6 +93,7 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void ShowLibrary()
     {
+        Visit("library", () => { ShowLibrary(); return Task.CompletedTask; });
         _viewCts?.Cancel();
         IsLoading = false;
         CurrentCollection = null;
@@ -109,10 +127,26 @@ public sealed partial class MainViewModel
 
     [ObservableProperty] private string _libraryQuery = "";
     private DispatcherTimer? _searchTimer;
+    private DispatcherTimer? _onlineTimer;
+    private CancellationTokenSource? _onlineCts;
+
+    /// <summary>Search results beyond your library: songs Yesify already fetched for you, then YouTube Music.</summary>
+    public ObservableCollection<Track> SearchOnline { get; } = [];
+
+    [ObservableProperty] private bool _isSearchingOnline;
+    [ObservableProperty] private string _searchOnlineStatus = "";
+
+    /// <summary>The "More songs" divider under your library's results.</summary>
+    public bool ShowSearchOnlineSection =>
+        IsSearchView && (IsSearchingOnline || SearchOnline.Count > 0 || SearchOnlineStatus.Length > 0);
+
+    partial void OnIsSearchingOnlineChanged(bool value) => OnPropertyChanged(nameof(ShowSearchOnlineSection));
+    partial void OnSearchOnlineStatusChanged(string value) => OnPropertyChanged(nameof(ShowSearchOnlineSection));
 
     [RelayCommand]
     private void ShowSearch()
     {
+        Visit("search", () => { ShowSearch(); return Task.CompletedTask; });
         _viewCts?.Cancel();
         IsLoading = false;
         CurrentCollection = null;
@@ -134,24 +168,41 @@ public sealed partial class MainViewModel
         _searchTimer.Start();
     }
 
-    /// <summary>Songs in your library whose title, artist or album contain every word typed.</summary>
+    private static string[] QueryWords(string query) =>
+        query.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w.ToLowerInvariant()).ToArray();
+
+    private static bool MatchesAll(Track t, string[] words)
+    {
+        var hay = $"{t.Title} {t.Artist} {t.Album}".ToLowerInvariant();
+        return words.All(hay.Contains);
+    }
+
+    /// <summary>The same song from different places (Spotify, YouTube Music) compares equal.</summary>
+    private static string SongIdentity(Track t)
+    {
+        static string Squash(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+        return Squash(t.Title) + "|" + Squash(t.PrimaryArtist);
+    }
+
+    /// <summary>
+    /// Songs in your library whose title, artist or album contain every word typed, right away; then, once
+    /// typing settles, everything else Yesify can fetch (see <see cref="SearchOnlineAsync"/>).
+    /// </summary>
     private void RunSearch()
     {
         if (CurrentView != ViewMode.Search) return;
-        var words = LibraryQuery.Split(' ', StringSplitOptions.RemoveEmptyEntries).Select(w => w.ToLowerInvariant()).ToArray();
+        var words = QueryWords(LibraryQuery);
         Tracks.Clear();
+        StopOnlineSearch(clear: true);
+        ResetViewExtras();
         if (words.Length == 0)
         {
-            ViewSubtitle = "Search the songs in your library: Liked Songs, your playlists and imported ones.";
+            ViewSubtitle = "Search your library and all of YouTube Music: songs, artists, albums and playlists.";
             return;
         }
 
         var hits = _library.AllTracks(_liked.Tracks)
-            .Where(t =>
-            {
-                var hay = $"{t.Title} {t.Artist} {t.Album}".ToLowerInvariant();
-                return words.All(hay.Contains);
-            })
+            .Where(t => MatchesAll(t, words))
             .Take(300)
             .ToList();
         for (var i = 0; i < hits.Count; i++)
@@ -161,6 +212,101 @@ public sealed partial class MainViewModel
             Tracks.Add(hits[i]);
         }
         ViewSubtitle = hits.Count == 0 ? "No songs in your library match." : $"{hits.Count} song{(hits.Count == 1 ? "" : "s")} in your library";
+
+        // Online once typing has really paused, so each keystroke doesn't hit the network.
+        IsSearchingOnline = true;
+        var query = LibraryQuery.Trim();
+        _onlineTimer?.Stop();
+        _onlineTimer = new DispatcherTimer(TimeSpan.FromMilliseconds(350), DispatcherPriority.Background,
+            (_, _) => { _onlineTimer!.Stop(); _ = SearchOnlineAsync(query); }, Dispatcher.CurrentDispatcher);
+        _onlineTimer.Start();
+    }
+
+    private void StopOnlineSearch(bool clear)
+    {
+        _onlineTimer?.Stop();
+        _onlineCts?.Cancel();
+        IsSearchingOnline = false;
+        if (!clear) return;
+        SearchOnline.Clear();
+        SearchOnlineStatus = "";
+        OnPropertyChanged(nameof(HasTracks));
+        OnPropertyChanged(nameof(ShowSearchOnlineSection));
+    }
+
+    /// <summary>
+    /// Everything beyond your library that matches: songs Yesify has already fetched for you (Home's
+    /// mixes, artists' popular songs) show at once, then YouTube Music's results are added under them.
+    /// Songs already listed above (in your library) aren't repeated.
+    /// </summary>
+    private async Task SearchOnlineAsync(string query)
+    {
+        _onlineCts?.Cancel();
+        var cts = _onlineCts = new CancellationTokenSource();
+        IsSearchingOnline = true;
+        SearchOnlineStatus = "";
+        var words = QueryWords(query);
+        var have = Tracks.Select(SongIdentity).ToHashSet();
+
+        void Add(IEnumerable<Track> songs)
+        {
+            foreach (var t in songs)
+            {
+                if (!have.Add(SongIdentity(t))) continue;
+                t.Number = SearchOnline.Count + 1;
+                t.IsLiked = _liked.Contains(t);
+                SearchOnline.Add(t);
+            }
+            OnPropertyChanged(nameof(HasTracks));
+            OnPropertyChanged(nameof(ShowSearchOnlineSection));
+        }
+
+        // Artists, albums and playlists, alongside the songs.
+        var pages = _music.SearchAsync(query, cts.Token);
+        try
+        {
+            Add(RecommendedPool().Where(t => MatchesAll(t, words)).Take(10));
+            List<Track> online;
+            try { online = await _music.SearchSongsAsync(query, cts.Token); }
+            catch (OperationCanceledException) { throw; }
+            catch { online = []; }
+            if (online.Count == 0) online = await _youtube.SearchAsync(query, cts.Token); // regular YouTube as a fallback
+            if (cts.IsCancellationRequested) return;
+            Add(online.Take(20));
+            if (SearchOnline.Count == 0) SearchOnlineStatus = "Nothing else found.";
+            await ShowSearchPagesAsync(query, pages, cts);
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) when (!cts.IsCancellationRequested)
+        {
+            SearchOnlineStatus = SearchOnline.Count == 0 ? "Couldn't search online right now. Check your connection." : "";
+        }
+        finally
+        {
+            if (_onlineCts == cts) IsSearchingOnline = false;
+        }
+    }
+
+    /// <summary>
+    /// Search rows from YouTube Music. Artists go on top when one is clearly what was typed
+    /// ("kanye" → Kanye West); otherwise every row goes under the songs.
+    /// </summary>
+    private async Task ShowSearchPagesAsync(string query, Task<MusicSearchResults> pages, CancellationTokenSource cts)
+    {
+        MusicSearchResults found;
+        try { found = await pages; }
+        catch { return; } // the songs are still there
+        if (cts.IsCancellationRequested || CurrentView != ViewMode.Search) return;
+
+        static string Squash(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
+        var q = Squash(query);
+        var first = found.Artists.FirstOrDefault();
+        var artistFirst = first != null && q.Length > 1 && (Squash(first.Title).StartsWith(q) || q.StartsWith(Squash(first.Title)));
+
+        if (found.Artists.Count > 0)
+            (artistFirst ? ViewTopSections : ViewSections).Add(new HomeSection { Title = "Artists", Items = found.Artists });
+        if (found.Albums.Count > 0) ViewSections.Add(new HomeSection { Title = "Albums", Items = found.Albums });
+        if (found.Playlists.Count > 0) ViewSections.Add(new HomeSection { Title = "Playlists", Items = found.Playlists });
     }
 
     // ================================================================ your playlists
@@ -173,7 +319,13 @@ public sealed partial class MainViewModel
         return $"{(p.Author.Length > 0 ? p.Author : "Playlist")} · {count}";
     }
 
-    private Task OpenUserPlaylistAsync(UserPlaylist p) => LoadViewAsync(_ =>
+    private Task OpenUserPlaylistAsync(UserPlaylist p)
+    {
+        Visit("user:" + p.Id, () => OpenUserPlaylistAsync(p));
+        return LoadUserPlaylistAsync(p);
+    }
+
+    private Task LoadUserPlaylistAsync(UserPlaylist p) => LoadViewAsync(_ =>
     {
         CurrentUserPlaylist = p;
         ViewDescription = p.Description;
@@ -219,11 +371,14 @@ public sealed partial class MainViewModel
     }
 
     /// <summary>Everything shown in the open view (album, playlist, Liked Songs, search results).</summary>
-    public IReadOnlyList<Track> ShownTracks => Tracks.ToList();
+    public IReadOnlyList<Track> ShownTracks => ViewTracks();
+
+    /// <summary>The open view's songs; on Search, your library's matches and then the ones found online.</summary>
+    private List<Track> ViewTracks() => Tracks.Concat(SearchOnline).ToList();
 
     /// <summary>Queues everything in the open view (album, playlist, mix, Liked Songs, search results).</summary>
     public void QueueView(bool shuffled, bool next = false) =>
-        QueueAll(Tracks.ToList(), shuffled, CurrentView == ViewMode.Collection && ViewTitle.Length > 0 ? ViewTitle : null, next);
+        QueueAll(ViewTracks(), shuffled, CurrentView == ViewMode.Collection && ViewTitle.Length > 0 ? ViewTitle : null, next);
 
     /// <summary>"Copy to New Playlist": the open album/playlist with its title, description and artwork.</summary>
     public void CopyViewToNewPlaylist()
@@ -254,7 +409,7 @@ public sealed partial class MainViewModel
 
     /// <summary>Imported playlists in the library, offered as "Add to Playlist" targets.</summary>
     public IReadOnlyList<PlaylistInfo> ImportedPlaylists =>
-        _settings.SavedCollections.Where(s => s.Kind != CollectionKind.Album).ToList();
+        _settings.SavedCollections.Where(s => s.Kind is not (CollectionKind.Album or CollectionKind.MusicAlbum)).ToList();
 
     /// <summary>
     /// Adds songs to an imported playlist. Imported playlists mirror their source and can't be changed, so
@@ -296,6 +451,8 @@ public sealed partial class MainViewModel
     /// <summary>All songs of an imported playlist, fetched without touching the open view.</summary>
     private async Task<List<Track>> FetchCollectionTracksAsync(PlaylistInfo p)
     {
+        if (p.Kind == CollectionKind.MusicAlbum) return (await _music.AlbumAsync(p.Id, CancellationToken.None)).Songs;
+        if (p.Kind == CollectionKind.MusicPlaylist) return (await _music.PlaylistAsync(p.Id, CancellationToken.None)).Songs;
         if (p.Kind == CollectionKind.YouTubePlaylist && YoutubeExplode.Playlists.PlaylistId.TryParse(p.Id) is { } ytId)
             return (await _youtube.GetPlaylistAsync(ytId, CancellationToken.None)).Tracks;
 

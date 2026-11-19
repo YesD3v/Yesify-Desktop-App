@@ -103,14 +103,14 @@ public sealed class TabBackgroundConverter : IValueConverter
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
 }
 
-/// <summary>The header row gets a plain container; song rows get the normal one.</summary>
+/// <summary>The header and divider rows get a plain container; song rows get the normal one.</summary>
 public sealed class RowStyleSelector : StyleSelector
 {
     public Style? Default { get; set; }
     public Style? Plain { get; set; }
 
     public override Style? SelectStyle(object item, DependencyObject container) =>
-        item is HeaderMarker ? Plain : Default;
+        item is HeaderMarker or SearchMoreMarker or TopSectionsMarker or SectionsMarker ? Plain : Default;
 }
 
 /// <summary>True when both bound values are the same object.</summary>

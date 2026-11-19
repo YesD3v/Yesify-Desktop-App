@@ -17,7 +17,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private readonly SpotifyEmbedService _spotify = new();
     private readonly CoverService _covers = new();
     private readonly LikedService _liked = new();
-    private readonly YouTubeService _youtube = new();
+    private readonly YouTubeService _youtube;
     private readonly LyricsService _lyrics = new();
     private readonly AudioPlayer _player = new();
     private readonly DispatcherTimer _timer;
@@ -36,6 +36,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public MainViewModel()
     {
+        // Before the audio service starts: it trims the cache to this limit as it starts.
+        YouTubeService.MaxCacheBytes = Math.Max(50, _settings.CacheLimitMb) * 1024 * 1024;
+        _youtube = new YouTubeService();
         _player.Volume = (float)_settings.Volume;
         _volume = _settings.Volume;
         _showLyrics = _settings.ShowLyrics;
@@ -57,7 +60,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public ObservableCollection<PlaylistInfo> Playlists { get; } = [];
     public ObservableCollection<Track> Tracks { get; } = [];
-    public bool HasTracks => Tracks.Count > 0;
+    public bool HasTracks => Tracks.Count > 0 || SearchOnline.Count > 0;
     public bool HasPlaylists => Playlists.Count > 0;
     public ObservableCollection<LyricLine> Lyrics { get; } = [];
 
@@ -86,6 +89,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [ObservableProperty] private int _currentLyricIndex = -1;
     [ObservableProperty] private LyricLine? _currentLyric;
     [ObservableProperty] private string _lyricsStatus = "Play a song to see its lyrics.";
+    [ObservableProperty] private bool _isLyricsLoading;
+
+    // The song (and audio length) the shown lyrics were fetched for, so they aren't fetched twice.
+    private Track? _lyricsTrack;
+    private TimeSpan _lyricsDuration;
 
     /// <summary>For the tray menu; reads the player directly since UI state isn't updated while hidden.</summary>
     public bool IsAudioPlaying => _player.IsPlaying;
@@ -231,7 +239,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         DurationText = s.Current.DurationText;
         PositionSeconds = _resumeAt.TotalSeconds;
         PositionText = Track.Format(_resumeAt);
-        LyricsStatus = "Press play to continue.";
+        // Lyrics right away, so they're there (on the right line) before play is pressed. Fetched for the
+        // song's listed length; play checks it against the real audio and refetches only if it differs.
+        _ = LoadLyricsAsync(s.Current, s.Current.Duration);
     }
 
     private void RefreshQueue()
@@ -379,6 +389,37 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void CloseSettings() => IsSettingsOpen = false;
 
+    /// <summary>The cache sizes the Settings slider steps through, in MB.</summary>
+    private static readonly long[] CacheSteps = [100, 250, 500, 1024, 2048, 5120, 10240, 20480, 51200];
+
+    public double CacheStepMax => CacheSteps.Length - 1;
+
+    /// <summary>The Settings slider's position; it snaps to the nearest step.</summary>
+    public double CacheStep
+    {
+        get
+        {
+            var i = Array.FindIndex(CacheSteps, s => s >= _settings.CacheLimitMb);
+            return i < 0 ? CacheSteps.Length - 1 : i;
+        }
+        set
+        {
+            var mb = CacheSteps[(int)Math.Clamp(Math.Round(value), 0, CacheSteps.Length - 1)];
+            if (mb != _settings.CacheLimitMb)
+            {
+                _settings.CacheLimitMb = mb;
+                SaveSettings();
+                YouTubeService.MaxCacheBytes = mb * 1024 * 1024;
+                _youtube.ApplyCacheLimit();
+                CacheSizeText = $"{FormatSize(YouTubeService.CacheSize())} of {FormatSize(YouTubeService.MaxCacheBytes)}";
+                OnPropertyChanged(nameof(CacheLimitText));
+            }
+            OnPropertyChanged(); // snap the knob
+        }
+    }
+
+    public string CacheLimitText => FormatSize(_settings.CacheLimitMb * 1024 * 1024);
+
     [RelayCommand]
     private void ClearAudioCache()
     {
@@ -388,25 +429,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     }
 
     private static string FormatSize(long bytes) =>
-        bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.0} GB" : $"{bytes / (double)(1L << 20):0} MB";
+        bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.#} GB" : $"{bytes / (double)(1L << 20):0} MB";
 
     // ================================================================ appearance
-
-    /// <summary>Lightweight: flat dark UI drawn in software. Off: the glass look with artwork backgrounds.</summary>
-    public bool IsLightweight
-    {
-        get => _settings.Lightweight;
-        set
-        {
-            if (_settings.Lightweight == value) return;
-            _settings.Lightweight = value;
-            SaveSettings();
-            OnPropertyChanged();
-            OnPropertyChanged(nameof(IsGlass));
-        }
-    }
-
-    public bool IsGlass => !IsLightweight;
 
     /// <summary>Discord Rich Presence: the song, artist, cover and progress on your Discord profile.</summary>
     public bool ShowOnDiscord
@@ -425,7 +450,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public string? BackdropImageUrl => CurrentTrack?.ImageUrl ?? CurrentCollection?.ImageUrl ?? ViewImageUrl;
 
     /// <summary>Exact playback position, for per-frame lyric animation.</summary>
-    public TimeSpan AudioPosition => _player.SmoothPosition;
+    public TimeSpan AudioPosition => _player.HasTrack ? _player.SmoothPosition : _resumeAt;
 
     /// <summary>Where playback is, read straight from the player (also while no window shows it).</summary>
     public TimeSpan PlaybackPosition => _player.HasTrack ? _player.Position : _resumeAt;
@@ -434,7 +459,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     public event Action? Seeked;
 
     /// <summary>The position the active-lyric index is computed from (decoder position plus a small lead).</summary>
-    public TimeSpan LyricIndexPosition => _player.Position + TimeSpan.FromMilliseconds(250);
+    public TimeSpan LyricIndexPosition => (_player.HasTrack ? _player.Position : _resumeAt) + TimeSpan.FromMilliseconds(250);
 
     partial void OnViewImageUrlChanged(string? value) => OnPropertyChanged(nameof(BackdropImageUrl));
 
@@ -525,7 +550,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         if (like) _liked.Add(track); else _liked.Remove(track);
 
         // The same song can be on screen, in the queue and in the player as different objects.
-        foreach (var t in Tracks.Concat(_context).Concat(_upNext).Concat(_liked.Tracks).Append(CurrentTrack))
+        foreach (var t in Tracks.Concat(SearchOnline).Concat(_context).Concat(_upNext).Concat(_liked.Tracks).Append(CurrentTrack))
             if (t != null && t.Key == track.Key) t.IsLiked = like;
         if (CurrentTrack != null && CurrentTrack.Key == track.Key) CurrentTrack.IsLiked = like;
 
@@ -542,6 +567,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private Task OpenLikedAsync()
     {
+        Visit("liked", OpenLikedAsync);
         SelectedPlaylist = null;
         return LoadViewAsync(_ =>
         {
@@ -627,7 +653,15 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ViewDescription = "";
         CurrentView = ViewMode.Collection;
         _viewIsLiked = false;
+        // Tearing down a big page (rows of tiles) takes a few dozen ms: let the loading skeleton paint
+        // first, so the click feels instant, and clear the old page behind it.
+        if (ViewSections.Count + ViewTopSections.Count > 0 || Tracks.Count > 60)
+        {
+            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+            if (cts.IsCancellationRequested) return;
+        }
         Tracks.Clear();
+        ResetViewExtras();
         try
         {
             var (title, subtitle, image, tracks) = await load(cts.Token);
@@ -660,6 +694,11 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private Task OpenPlaylistAsync(PlaylistInfo p)
     {
+        switch (p.Kind)
+        {
+            case CollectionKind.MusicAlbum: return OpenMusicAlbumAsync(p.Id);
+            case CollectionKind.MusicPlaylist: return OpenMusicPlaylistAsync(p.Id);
+        }
         if (p.Kind == CollectionKind.YouTubePlaylist && PlaylistId.TryParse(p.Id) is { } ytId)
             return OpenYouTubePlaylistAsync(ytId);
         return OpenSpotifyCollectionAsync(p.Kind == CollectionKind.Album ? "album" : "playlist", p.Id);
@@ -667,6 +706,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private Task OpenSpotifyCollectionAsync(string kind, string id)
     {
+        Visit($"spotify:{kind}:{id}", () => OpenSpotifyCollectionAsync(kind, id));
         PlaylistInfo? info = null;
         return LoadViewAsync(async ct =>
         {
@@ -716,7 +756,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
-    private Task OpenYouTubePlaylistAsync(PlaylistId id) => LoadViewAsync(async ct =>
+    private Task OpenYouTubePlaylistAsync(PlaylistId id)
+    {
+        Visit("youtube:" + id.Value, () => OpenYouTubePlaylistAsync(id));
+        return LoadYouTubePlaylistAsync(id);
+    }
+
+    private Task LoadYouTubePlaylistAsync(PlaylistId id) => LoadViewAsync(async ct =>
     {
         var (info, tracks) = await _youtube.GetPlaylistAsync(id, ct);
         CurrentCollection = info;
@@ -769,6 +815,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             return;
         }
 
+        Visit("query:" + text, SearchAsync);
         await LoadViewAsync(async ct =>
         {
             var tracks = await _youtube.SearchAsync(text, ct);
@@ -781,25 +828,29 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void PlayFrom(Track? track)
     {
         if (track == null) return;
-        StartContext(Tracks.ToList(), Math.Max(0, Tracks.IndexOf(track)));
+        // A song found online plays on through the other online results; anything else, through its list.
+        var list = SearchOnline.Contains(track) ? SearchOnline.ToList() : Tracks.ToList();
+        StartContext(list, Math.Max(0, list.IndexOf(track)));
         EnsureFullContext(CurrentCollection);
     }
 
     [RelayCommand]
     private void PlayAll()
     {
-        if (Tracks.Count == 0) return;
-        StartContext(Tracks.ToList(), Shuffle ? -1 : 0);
+        if (!HasTracks) return;
+        StartContext(ViewTracks(), Shuffle ? -1 : 0);
         EnsureFullContext(CurrentCollection);
+        ContinueWithAllSongs();
     }
 
     [RelayCommand]
     private void ShuffleAll()
     {
-        if (Tracks.Count == 0) return;
+        if (!HasTracks) return;
         Shuffle = true;
-        StartContext(Tracks.ToList(), -1);
+        StartContext(ViewTracks(), -1);
         EnsureFullContext(CurrentCollection);
+        ContinueWithAllSongs();
     }
 
     [RelayCommand]
@@ -1038,7 +1089,9 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         PositionText = "0:00";
         DurationSeconds = Math.Max(1, track.Duration.TotalSeconds);
         DurationText = track.DurationText;
-        ClearLyrics(); // loaded once the audio is ready, matched to its exact length
+        // Loaded once the audio is ready, matched to its exact length. Lyrics already shown (or on their
+        // way) for this very song stay, e.g. the restored song or Repeat One.
+        if (!ReferenceEquals(track, _lyricsTrack)) ClearLyrics();
 
         try
         {
@@ -1051,7 +1104,8 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
                 _player.Seek(_resumeAt); // continuing the restored session
             _resumeTrack = null;
             _resumeAt = TimeSpan.Zero;
-            _ = LoadLyricsAsync(track, _player.Duration, path);
+            if (!ReferenceEquals(track, _lyricsTrack) || Math.Abs((_player.Duration - _lyricsDuration).TotalSeconds) > 0.5)
+                _ = LoadLyricsAsync(track, _player.Duration);
             _failures = 0;
             IsPlaying = true;
             DurationSeconds = Math.Max(1, _player.Duration.TotalSeconds);
@@ -1232,6 +1286,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     public void SeekTo(double seconds)
     {
+        if (!_player.HasTrack && CurrentTrack != null && ReferenceEquals(CurrentTrack, _resumeTrack))
+        {
+            // The restored song isn't loaded yet: move where play will pick up.
+            _resumeAt = TimeSpan.FromSeconds(Math.Max(0, seconds));
+            ShowRestoredLyricLine();
+            ScheduleSessionSave();
+        }
         _player.Seek(TimeSpan.FromSeconds(seconds));
         PositionSeconds = seconds;
         PositionText = Track.Format(TimeSpan.FromSeconds(seconds));
@@ -1270,32 +1331,71 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void ClearLyrics()
     {
         _lyricsCts?.Cancel();
+        _lyricsTrack = null;
         Lyrics.Clear();
         CurrentLyric = null;
         CurrentLyricIndex = -1;
-        LyricsStatus = "Loading lyrics…";
+        LyricsStatus = "";
+        IsLyricsLoading = true;
     }
 
-    private async Task LoadLyricsAsync(Track track, TimeSpan audioDuration, string audioPath)
+    /// <summary>
+    /// Fetches the song's lyrics for the given audio length. Lyrics already showing for the same song stay
+    /// up until the new ones arrive (a refetch for the exact length then swaps them in place).
+    /// </summary>
+    private async Task LoadLyricsAsync(Track track, TimeSpan audioDuration)
     {
         _lyricsCts?.Cancel();
         var cts = _lyricsCts = new CancellationTokenSource();
-        Lyrics.Clear();
-        CurrentLyric = null;
-        CurrentLyricIndex = -1;
-        LyricsStatus = "Loading lyrics…";
+        var refetch = ReferenceEquals(track, _lyricsTrack) && Lyrics.Count > 0;
+        _lyricsTrack = track;
+        _lyricsDuration = audioDuration;
+        if (!refetch)
+        {
+            Lyrics.Clear();
+            CurrentLyric = null;
+            CurrentLyricIndex = -1;
+            LyricsStatus = "";
+            IsLyricsLoading = true;
+        }
         try
         {
             var lines = await _lyrics.GetAsync(track, audioDuration, cts.Token);
             if (cts.IsCancellationRequested) return;
+            if (refetch && lines.Count == 0) return; // keep what's showing
+            Lyrics.Clear();
+            CurrentLyric = null;
+            CurrentLyricIndex = -1;
             foreach (var l in lines) Lyrics.Add(l);
             LyricsStatus = lines.Count == 0 ? "No lyrics found for this song." : "";
+            if (!_player.HasTrack) ShowRestoredLyricLine(); // paused restored song: its line, not the first
         }
         catch (Exception) when (!cts.IsCancellationRequested)
         {
-            LyricsStatus = "Couldn't load lyrics.";
+            if (!refetch)
+            {
+                LyricsStatus = "Couldn't load lyrics.";
+                _lyricsTrack = null; // try again next time it plays
+            }
         }
         catch (OperationCanceledException) { }
+        finally
+        {
+            if (_lyricsCts == cts) IsLyricsLoading = false;
+        }
+    }
+
+    /// <summary>Before play is pressed on the restored song, light the line where it will pick up.</summary>
+    private void ShowRestoredLyricLine()
+    {
+        var idx = -1;
+        for (var i = 0; i < Lyrics.Count; i++)
+        {
+            if (Lyrics[i].Time is { } t && t <= _resumeAt + TimeSpan.FromMilliseconds(250)) idx = i;
+            else if (Lyrics[i].Time != null) break;
+        }
+        CurrentLyric = idx >= 0 ? Lyrics[idx] : null;
+        CurrentLyricIndex = idx;
     }
 
     public void Dispose()

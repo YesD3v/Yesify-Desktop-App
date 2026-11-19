@@ -18,7 +18,7 @@
             <SolidColorBrush x:Key="SubtleTextBrush" Color="#FF9A9AA6" />
             <SolidColorBrush x:Key="FaintTextBrush" Color="#FF7A7A86" />
             <SolidColorBrush x:Key="DividerBrush" Color="#FF24242B" />
-            <!-- Theme-dependent (swapped by App.ApplyTheme). -->
+            <!-- Theme colors (set by Theme.Apply). -->
             <SolidColorBrush x:Key="InactiveIconBrush" Color="#FF9A9AA6" />
             <SolidColorBrush x:Key="LogoBrush" Color="#FFFFFFFF" />
             <SolidColorBrush x:Key="LogoForegroundBrush" Color="#FF0A0A0C" />
@@ -157,7 +157,7 @@
             </Style>
 
             <!-- Round accent play button -->
-            <!-- Play / pause: solid white disc in lightweight, a frosted-glass disc with a white icon in glass. -->
+            <!-- Play / pause: a frosted-glass disc with a white icon. -->
             <Style x:Key="PlayButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
                 <Setter Property="Foreground" Value="{DynamicResource PlayGlyphBrush}" />
                 <Setter Property="Background" Value="{DynamicResource PlayButtonBrush}" />
@@ -412,7 +412,7 @@
                 </Setter>
             </Style>
 
-            <!-- Slim scrollbars: a frosted pill in glass, plain grey in lightweight (brushes set by App.ApplyTheme). -->
+            <!-- Slim scrollbars: a frosted pill (brushes set by Theme.Apply). -->
             <Style TargetType="ScrollBar">
                 <Setter Property="Width" Value="10" />
                 <Setter Property="MinWidth" Value="10" />

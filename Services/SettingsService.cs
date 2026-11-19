@@ -10,8 +10,8 @@ public sealed class Settings
     public bool ShowLyrics { get; set; } = true;
     public bool ShowQueue { get; set; }
     public double RightPanelWidth { get; set; } = 340;
-    // Lightweight: flat dark UI drawn in software (least memory). Otherwise the glass look.
-    public bool Lightweight { get; set; }
+    // Most downloaded audio to keep, in MB (Settings → Storage).
+    public long CacheLimitMb { get; set; } = 100;
     // Show what's playing on Discord (Rich Presence).
     public bool DiscordRpc { get; set; } = true;
     public bool TrayHintShown { get; set; }

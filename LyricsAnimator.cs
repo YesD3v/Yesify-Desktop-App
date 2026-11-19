@@ -1,7 +1,9 @@
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
+using System.Windows.Input;
 using System.Windows.Media.Animation;
+using System.Windows.Threading;
 using Yesify.Models;
 using Yesify.ViewModels;
 
@@ -12,7 +14,9 @@ namespace Yesify;
 /// frame from the exact audio position: a soft white gradient sweeps across each word as it's sung (when the
 /// lyrics have real per-word timing; line-timed lyrics light the whole line),
 /// instrumental breaks show three dots that fill up and breathe, and the view glides to the active line.
-/// Otherwise (paused, hidden, lightweight) it just lights the active line, with no per-frame work.
+/// Otherwise (paused or hidden) it just lights the active line, with no per-frame work.
+/// Scrolling the lyrics yourself (mouse wheel, smoothly) stops the view following the song; two seconds
+/// after you stop, it glides back to the line being sung.
 /// </summary>
 public sealed class LyricsAnimator
 {
@@ -27,16 +31,72 @@ public sealed class LyricsAnimator
     private bool _perFrame;
     private int _active = -1;
 
+    /// <summary>How long after the user's last scroll the view goes back to following the song.</summary>
+    private static readonly TimeSpan ResyncDelay = TimeSpan.FromSeconds(2);
+
+    private bool _userScrolled;
+    private readonly DispatcherTimer _resync;
+    private double _wheelTarget;
+    private DateTime _wheelUntil;
+    private bool _scrollPending;
+
     public LyricsAnimator(MainViewModel vm, ItemsControl list, ScrollViewer scroller)
     {
         _vm = vm;
         _list = list;
         _scroller = scroller;
         _vm.Lyrics.CollectionChanged += OnLyricsReplaced;
+        _scroller.PreviewMouseWheel += OnWheel;
+        _list.IsVisibleChanged += OnListVisibleChanged;
+        _resync = new DispatcherTimer(ResyncDelay, DispatcherPriority.Normal, (_, _) => Resync(), _scroller.Dispatcher);
+        _resync.Stop();
     }
 
-    private void OnLyricsReplaced(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) =>
+    private void OnLyricsReplaced(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
+    {
         _active = -1; // new song: containers are rebuilt
+        _userScrolled = false;
+        _resync.Stop();
+    }
+
+    /// <summary>
+    /// The user scrolls the lyrics: glide there smoothly (wheel notches add up while it moves) and stop
+    /// following the song until they've left it alone for <see cref="ResyncDelay"/>.
+    /// </summary>
+    private void OnWheel(object sender, MouseWheelEventArgs e)
+    {
+        e.Handled = true;
+        if (_scroller.ScrollableHeight <= 0) return;
+        _userScrolled = true;
+        _resync.Stop();
+        _resync.Start();
+
+        var from = _scroller.VerticalOffset;
+        var basis = DateTime.UtcNow < _wheelUntil ? _wheelTarget : from;
+        _wheelTarget = Math.Clamp(basis - e.Delta * 1.1, 0, _scroller.ScrollableHeight);
+        var duration = TimeSpan.FromMilliseconds(320);
+        _wheelUntil = DateTime.UtcNow + duration;
+        _scroller.BeginAnimation(ScrollAnimator.OffsetProperty,
+            new DoubleAnimation(from, _wheelTarget, duration) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+    }
+
+    /// <summary>Back to following the song: glide (gently) to the line being sung.</summary>
+    public void Resync()
+    {
+        _resync.Stop();
+        if (!_userScrolled) return;
+        _userScrolled = false;
+        if (_vm.Lyrics.All(l => l.Time == null)) return; // unsynced: nothing to go back to
+        ScrollTo(_active, TimeSpan.FromMilliseconds(900), new CubicEase { EasingMode = EasingMode.EaseInOut });
+    }
+
+    /// <summary>The panel (or window) opened: put the line being sung in view once it's laid out.</summary>
+    private void OnListVisibleChanged(object sender, DependencyPropertyChangedEventArgs e)
+    {
+        if (e.NewValue is not true || _userScrolled || _scrollPending) return;
+        _scrollPending = true;
+        _list.LayoutUpdated += OnLayoutUpdated;
+    }
 
     /// <summary>A fresh brush per word (the sweep moves its gradient stops).</summary>
     public static Brush NewWordBrush(LyricWord word)
@@ -50,7 +110,7 @@ public sealed class LyricsAnimator
     /// <summary>Call whenever playback, visibility, theme or the active line may have changed.</summary>
     public void Refresh()
     {
-        var perFrame = _vm.ShowLyrics && _vm.IsGlass && _vm.IsPlaying && _list.IsVisible;
+        var perFrame = _vm.ShowLyrics && _vm.IsPlaying && _list.IsVisible;
         if (perFrame != _perFrame)
         {
             if (perFrame) CompositionTarget.Rendering += OnFrame;
@@ -59,10 +119,8 @@ public sealed class LyricsAnimator
         }
         if (!perFrame)
         {
-            // Lightweight: follow the same clock that triggered this refresh, so the right line lights up.
-            // Glass while paused: the audible position, for an exact still frame.
-            var pos = _vm.IsGlass ? _vm.AudioPosition : _vm.LyricIndexPosition;
-            Render(pos, sweep: _vm.IsGlass);
+            // Paused (or hidden): the audible position, for an exact still frame.
+            Render(_vm.AudioPosition, sweep: true);
         }
     }
 
@@ -71,6 +129,10 @@ public sealed class LyricsAnimator
         if (_perFrame) CompositionTarget.Rendering -= OnFrame;
         _perFrame = false;
         _vm.Lyrics.CollectionChanged -= OnLyricsReplaced;
+        _scroller.PreviewMouseWheel -= OnWheel;
+        _list.IsVisibleChanged -= OnListVisibleChanged;
+        _list.LayoutUpdated -= OnLayoutUpdated;
+        _resync.Stop();
     }
 
     private void OnFrame(object? sender, EventArgs e) => Render(_vm.AudioPosition, sweep: true);
@@ -93,7 +155,7 @@ public sealed class LyricsAnimator
             if (_active >= 0 && _active < lines.Count) SetLine(_active, active: false);
             _active = idx;
             if (idx >= 0) SetLine(idx, active: true);
-            ScrollTo(idx);
+            if (!_userScrolled) ScrollTo(idx);
         }
         if (idx < 0 || Line(idx) is not { } root) return;
 
@@ -212,17 +274,38 @@ public sealed class LyricsAnimator
     }
 
     /// <summary>Glides so the active line sits about a third of the way down.</summary>
-    private void ScrollTo(int idx)
+    private void ScrollTo(int idx, TimeSpan? duration = null, IEasingFunction? ease = null)
     {
         double target;
         if (idx < 0) target = 0;
         else if (Line(idx) is { IsVisible: true } el)
             target = _scroller.VerticalOffset + el.TransformToAncestor(_scroller).Transform(new Point(0, 0)).Y - _scroller.ViewportHeight * 0.3;
-        else return;
+        else
+        {
+            // Lines not laid out yet (lyrics just arrived, or the panel just opened): scroll once they are.
+            if (!_scrollPending && _list.IsVisible)
+            {
+                _scrollPending = true;
+                _list.LayoutUpdated += OnLayoutUpdated;
+            }
+            return;
+        }
 
         target = Math.Clamp(target, 0, _scroller.ScrollableHeight);
         _scroller.BeginAnimation(ScrollAnimator.OffsetProperty,
-            new DoubleAnimation(_scroller.VerticalOffset, target, new Duration(TimeSpan.FromMilliseconds(550))) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            new DoubleAnimation(_scroller.VerticalOffset, target, new Duration(duration ?? TimeSpan.FromMilliseconds(550)))
+            {
+                EasingFunction = ease ?? new CubicEase { EasingMode = EasingMode.EaseOut },
+            });
+    }
+
+    private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        _list.LayoutUpdated -= OnLayoutUpdated;
+        _scrollPending = false;
+        if (_userScrolled || _active < 0 || Line(_active) is not { IsVisible: true }) return;
+        SetLine(_active, active: true);
+        ScrollTo(_active);
     }
 
     private FrameworkElement? Line(int idx) =>

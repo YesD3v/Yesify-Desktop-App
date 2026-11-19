@@ -52,6 +52,124 @@
             </Setter>
         </Style>
 
+        <!-- Clickable artist / album names in song rows and the player bar -->
+        <Style x:Key="LinkText" TargetType="TextBlock">
+            <Setter Property="Cursor" Value="Hand" />
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="TextDecorations" Value="Underline" />
+                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <!-- A row of tiles (Home, artist pages, Explore, search): albums, artists, playlists, genres, songs.
+             "Show all" opens the row's own page; Wrap rows show every tile. -->
+        <DataTemplate x:Key="SectionTemplate">
+            <StackPanel Margin="0,26,0,0">
+                <Grid>
+                    <StackPanel>
+                        <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="Bold" Visibility="{Binding Title, Converter={StaticResource NullToVis}}" />
+                        <TextBlock Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,2,0,0"
+                                   Visibility="{Binding Subtitle, Converter={StaticResource NullToVis}}" />
+                    </StackPanel>
+                    <Button Style="{StaticResource PillButton}" Content="Show all" Padding="12,5" FontSize="12" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0"
+                            Background="Transparent" Foreground="{DynamicResource SubtleTextBrush}"
+                            Command="{Binding DataContext.OpenSectionMoreCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}"
+                            Visibility="{Binding MoreId, Converter={StaticResource NullToVis}}" />
+                </Grid>
+                <ItemsControl ItemsSource="{Binding Items}" Margin="-8,10,0,0">
+                    <ItemsControl.Style>
+                        <Style TargetType="ItemsControl">
+                            <Setter Property="ItemsPanel">
+                                <Setter.Value>
+                                    <ItemsPanelTemplate>
+                                        <local:OneRowPanel />
+                                    </ItemsPanelTemplate>
+                                </Setter.Value>
+                            </Setter>
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding Wrap}" Value="True">
+                                    <Setter Property="ItemsPanel">
+                                        <Setter.Value>
+                                            <ItemsPanelTemplate>
+                                                <WrapPanel />
+                                            </ItemsPanelTemplate>
+                                        </Setter.Value>
+                                    </Setter>
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </ItemsControl.Style>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Button x:Name="Tile" Width="184" Margin="0,0,4,4" Cursor="Hand" Foreground="{StaticResource TextBrush}" Click="HomeTile_Click" ToolTip="{Binding Title}"
+                                    ContextMenuOpening="HomeTile_ContextMenuOpening">
+                                <Button.ContextMenu>
+                                    <ContextMenu /> <!-- filled in HomeTile_ContextMenuOpening -->
+                                </Button.ContextMenu>
+                                <Button.Template>
+                                    <ControlTemplate TargetType="Button">
+                                        <Border x:Name="Bd" Background="Transparent" CornerRadius="10" Padding="8">
+                                            <ContentPresenter />
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RaisedBrush}" />
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Button.Template>
+                                <Grid>
+                                    <StackPanel x:Name="Cover">
+                                        <Border x:Name="Art" Width="168" Height="168" CornerRadius="8" Background="{DynamicResource RaisedBrush}">
+                                            <Grid>
+                                                <TextBlock x:Name="Placeholder" Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="40" Foreground="{DynamicResource FaintTextBrush}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                                <Border x:Name="Pic" CornerRadius="8" local:AsyncImage.BackgroundUrl="{Binding ImageUrl}" local:AsyncImage.Width="336" />
+                                            </Grid>
+                                        </Border>
+                                        <TextBlock x:Name="Name" Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Margin="2,10,0,0" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock x:Name="Sub" Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="2,2,0,0"
+                                                   TextTrimming="CharacterEllipsis" />
+                                    </StackPanel>
+                                    <!-- genre / mood: a colored stripe and its name -->
+                                    <Border x:Name="Genre" Visibility="Collapsed" Width="168" Height="64" CornerRadius="8" Background="{DynamicResource RaisedBrush}" ClipToBounds="True">
+                                        <Grid>
+                                            <Border Width="6" HorizontalAlignment="Left" CornerRadius="8,0,0,8" Background="{Binding Color}" />
+                                            <TextBlock Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" VerticalAlignment="Center" Margin="20,0,10,0" TextTrimming="CharacterEllipsis" />
+                                        </Grid>
+                                    </Border>
+                                </Grid>
+                            </Button>
+                            <DataTemplate.Triggers>
+                                <DataTrigger Binding="{Binding Kind}" Value="Artist">
+                                    <Setter TargetName="Art" Property="CornerRadius" Value="84" />
+                                    <Setter TargetName="Pic" Property="CornerRadius" Value="84" />
+                                    <Setter TargetName="Placeholder" Property="Text" Value="&#xE77B;" />
+                                    <Setter TargetName="Name" Property="TextAlignment" Value="Center" />
+                                    <Setter TargetName="Sub" Property="TextAlignment" Value="Center" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Kind}" Value="MusicArtist">
+                                    <Setter TargetName="Art" Property="CornerRadius" Value="84" />
+                                    <Setter TargetName="Pic" Property="CornerRadius" Value="84" />
+                                    <Setter TargetName="Placeholder" Property="Text" Value="&#xE77B;" />
+                                    <Setter TargetName="Name" Property="TextAlignment" Value="Center" />
+                                    <Setter TargetName="Sub" Property="TextAlignment" Value="Center" />
+                                </DataTrigger>
+                                <DataTrigger Binding="{Binding Kind}" Value="MusicCategory">
+                                    <Setter TargetName="Cover" Property="Visibility" Value="Collapsed" />
+                                    <Setter TargetName="Genre" Property="Visibility" Value="Visible" />
+                                    <Setter TargetName="Tile" Property="ToolTip" Value="{x:Null}" />
+                                </DataTrigger>
+                            </DataTemplate.Triggers>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+            </StackPanel>
+        </DataTemplate>
+
+        <local:SkeletonWidthConverter x:Key="SkeletonWidth" />
         <local:RowStyleSelector x:Key="TrackRows" Default="{StaticResource TrackRowStyle}" Plain="{StaticResource PlainRowStyle}" />
 
         <!-- Queue panel row -->
@@ -103,7 +221,7 @@
     <Grid>
         <!-- ============================================================ glass backdrop
              Artwork decoded tiny and stretched (reads as a blur), tinted with its own vivid colors. -->
-        <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True" Visibility="{Binding IsGlass, Converter={StaticResource BoolToVis}}">
+        <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True" >
             <!-- The blurred artwork is kept as a half-size bitmap: without the cache, the two full-window blurs
                  are recomputed on every frame that anything above them changes (lyrics, the seek bar). -->
             <Grid>
@@ -156,6 +274,9 @@
                                    HorizontalAlignment="Center" VerticalAlignment="Center" />
                     </Border>
                     <TextBlock Text="Yesify" Margin="8,0,0,0" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" />
+                    <Button Style="{StaticResource IconButton}" Content="&#xE72B;" FontSize="12" Width="28" Height="28" Margin="10,0,0,0" ToolTip="Back (mouse back button)"
+                            Command="{Binding GoBackCommand}" WindowChrome.IsHitTestVisibleInChrome="True"
+                            Visibility="{Binding CanGoBack, Converter={StaticResource BoolToVis}}" />
                 </StackPanel>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" WindowChrome.IsHitTestVisibleInChrome="True">
                     <Button Style="{StaticResource CaptionButton}" Content="mini" ContentTemplate="{StaticResource MiniPlayerGlyph}" Command="{Binding OpenMiniPlayerCommand}" ToolTip="Open miniplayer" />
@@ -207,7 +328,14 @@
                                                Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
                                 </StackPanel>
                             </Button>
-                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowSearchCommand}" Tag="{Binding IsSearchView}" ToolTip="Search your library" Margin="0,2,0,0">
+                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowExploreCommand}" Tag="{Binding IsExploreView}" ToolTip="Explore: new releases, charts, moods and genres" Margin="0,2,0,0">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="&#xE774;" FontFamily="{StaticResource IconFont}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Width="18" TextAlignment="Center" Margin="0,0,10,0" />
+                                    <TextBlock Text="Explore" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                               Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource SideNavButton}" Command="{Binding ShowSearchCommand}" Tag="{Binding IsSearchView}" ToolTip="Search" Margin="0,2,0,0">
                                 <StackPanel Orientation="Horizontal">
                                     <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" VerticalAlignment="Center" Width="18" TextAlignment="Center" Margin="0,0,10,0" />
                                     <TextBlock Text="Search" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
@@ -239,27 +367,42 @@
                     </Grid.RowDefinitions>
 
                     <!-- Home: rows of mixes, songs, releases and artists picked from what you play -->
-                    <ScrollViewer x:Name="HomeScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsHomeView, Converter={StaticResource BoolToVis}}">
+                    <ScrollViewer x:Name="HomeScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding IsHomeView, Converter={StaticResource BoolToVis}}">
                         <StackPanel Margin="32,28,20,24">
                             <Grid>
                                 <TextBlock Text="{Binding Greeting}" FontSize="40" FontWeight="Bold" />
-                                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0">
-                                    <TextBlock Text="Updating…" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,0,10,0"
-                                               Visibility="{Binding IsHomeBuilding, Converter={StaticResource BoolToVis}}" />
-                                    <Button Style="{StaticResource IconButton}" Content="&#xE72C;" FontSize="16" Width="40" Height="40" ToolTip="New picks"
-                                            Command="{Binding RefreshHomeCommand}" />
-                                </StackPanel>
+                                <!-- New picks: the arrows turn while Home is being rebuilt, then ease to a stop -->
+                                <Button HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,12,0" Width="40" Height="40"
+                                        Command="{Binding RefreshHomeCommand}">
+                                    <Button.Style>
+                                        <Style TargetType="Button" BasedOn="{StaticResource IconButton}">
+                                            <Setter Property="ToolTip" Value="New picks" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding IsHomeBuilding}" Value="True">
+                                                    <Setter Property="ToolTip" Value="Finding new picks for you…" />
+                                                    <Setter Property="Foreground" Value="{DynamicResource AccentBrush}" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Button.Style>
+                                    <Grid Width="16" Height="16" local:Spin.IsSpinning="{Binding IsHomeBuilding}">
+                                        <Path Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.5"
+                                              StrokeStartLineCap="Round" StrokeEndLineCap="Round" Data="M 13.31,9.42 A 5.5,5.5 0 1 1 11.6,3.9" />
+                                        <Path Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M 14.6,5.9 L 13.5,1.4 L 9.6,4.6 Z" />
+                                    </Grid>
+                                </Button>
                             </Grid>
                             <TextBlock Text="{Binding HomeStatus}" FontSize="14" Foreground="{DynamicResource SubtleTextBrush}" TextWrapping="Wrap" MaxWidth="560"
                                        HorizontalAlignment="Left" Margin="0,12,0,0" Visibility="{Binding HomeStatus, Converter={StaticResource NullToVis}}" />
-                            <ItemsControl ItemsSource="{Binding HomeSections}">
+                            <!-- Placeholder rows that shimmer while the first Home is on its way -->
+                            <ItemsControl ItemsSource="{x:Static local:Placeholders.Sections}" IsHitTestVisible="False"
+                                          Visibility="{Binding ShowHomeSkeleton, Converter={StaticResource BoolToVis}}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <StackPanel Margin="0,26,0,0">
-                                            <TextBlock Text="{Binding Title}" FontSize="22" FontWeight="Bold" />
-                                            <TextBlock Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,2,0,0"
-                                                       Visibility="{Binding Subtitle, Converter={StaticResource NullToVis}}" />
-                                            <ItemsControl ItemsSource="{Binding Items}" Margin="-8,10,0,0">
+                                            <local:GlassBlock Width="220" Height="22" HorizontalAlignment="Left" CornerRadius="6" />
+                                            <ItemsControl ItemsSource="{x:Static local:Placeholders.Tiles}" Margin="-8,10,0,0">
                                                 <ItemsControl.ItemsPanel>
                                                     <ItemsPanelTemplate>
                                                         <local:OneRowPanel />
@@ -267,45 +410,11 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate>
-                                                        <Button Width="184" Margin="0,0,4,0" Cursor="Hand" Foreground="{StaticResource TextBrush}" Click="HomeTile_Click" ToolTip="{Binding Title}"
-                                                                ContextMenuOpening="HomeTile_ContextMenuOpening">
-                                                            <Button.ContextMenu>
-                                                                <ContextMenu /> <!-- filled in HomeTile_ContextMenuOpening -->
-                                                            </Button.ContextMenu>
-                                                            <Button.Template>
-                                                                <ControlTemplate TargetType="Button">
-                                                                    <Border x:Name="Bd" Background="Transparent" CornerRadius="10" Padding="8">
-                                                                        <ContentPresenter />
-                                                                    </Border>
-                                                                    <ControlTemplate.Triggers>
-                                                                        <Trigger Property="IsMouseOver" Value="True">
-                                                                            <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RaisedBrush}" />
-                                                                        </Trigger>
-                                                                    </ControlTemplate.Triggers>
-                                                                </ControlTemplate>
-                                                            </Button.Template>
-                                                            <StackPanel>
-                                                                <Border x:Name="Art" Width="168" Height="168" CornerRadius="8" Background="{DynamicResource RaisedBrush}">
-                                                                    <Grid>
-                                                                        <TextBlock x:Name="Placeholder" Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="40" Foreground="{DynamicResource FaintTextBrush}"
-                                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                                                        <Border x:Name="Pic" CornerRadius="8" local:AsyncImage.BackgroundUrl="{Binding ImageUrl}" local:AsyncImage.Width="336" />
-                                                                    </Grid>
-                                                                </Border>
-                                                                <TextBlock x:Name="Name" Text="{Binding Title}" FontSize="14" FontWeight="SemiBold" Margin="2,10,0,0" TextTrimming="CharacterEllipsis" />
-                                                                <TextBlock x:Name="Sub" Text="{Binding Subtitle}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="2,2,0,0"
-                                                                           TextTrimming="CharacterEllipsis" />
-                                                            </StackPanel>
-                                                        </Button>
-                                                        <DataTemplate.Triggers>
-                                                            <DataTrigger Binding="{Binding Kind}" Value="Artist">
-                                                                <Setter TargetName="Art" Property="CornerRadius" Value="84" />
-                                                                <Setter TargetName="Pic" Property="CornerRadius" Value="84" />
-                                                                <Setter TargetName="Placeholder" Property="Text" Value="&#xE77B;" />
-                                                                <Setter TargetName="Name" Property="TextAlignment" Value="Center" />
-                                                                <Setter TargetName="Sub" Property="TextAlignment" Value="Center" />
-                                                            </DataTrigger>
-                                                        </DataTemplate.Triggers>
+                                                        <StackPanel Width="184" Margin="0,0,4,0">
+                                                            <local:GlassBlock Width="168" Height="168" Margin="8,8,8,0" CornerRadius="8" />
+                                                            <local:GlassBlock Width="128" Height="12" Margin="10,13,0,0" HorizontalAlignment="Left" CornerRadius="6" />
+                                                            <local:GlassBlock Width="84" Height="10" Margin="10,8,0,8" HorizontalAlignment="Left" CornerRadius="5" />
+                                                        </StackPanel>
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -313,11 +422,12 @@
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
+                            <ItemsControl x:Name="HomeSectionsList" ItemsSource="{Binding HomeSections}" ItemTemplate="{StaticResource SectionTemplate}" />
                         </StackPanel>
                     </ScrollViewer>
 
                     <!-- Library: a grid of covers -->
-                    <ScrollViewer x:Name="LibraryScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" Visibility="{Binding IsLibraryView, Converter={StaticResource BoolToVis}}">
+                    <ScrollViewer x:Name="LibraryScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding IsLibraryView, Converter={StaticResource BoolToVis}}">
                         <StackPanel Margin="32,28,20,24">
                             <TextBlock Text="Library" FontSize="40" FontWeight="Bold" />
                             <ItemsControl ItemsSource="{Binding LibraryItems}" Margin="-8,18,0,0">
@@ -399,19 +509,68 @@
                                      Text="{Binding LibraryQuery, UpdateSourceTrigger=PropertyChanged}" IsVisibleChanged="SearchBox_IsVisibleChanged" />
                             <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" Foreground="{DynamicResource SubtleTextBrush}" IsHitTestVisible="False"
                                        VerticalAlignment="Center" HorizontalAlignment="Left" Margin="16,0,0,0" />
-                            <TextBlock Text="Songs, artists or albums in your library" Foreground="{DynamicResource FaintTextBrush}" IsHitTestVisible="False"
+                            <TextBlock Text="What do you want to listen to?" Foreground="{DynamicResource FaintTextBrush}" IsHitTestVisible="False"
                                        VerticalAlignment="Center" HorizontalAlignment="Left" Margin="42,0,0,0"
                                        Visibility="{Binding LibraryQuery, Converter={StaticResource InvNullToVis}}" />
                         </Grid>
                     </StackPanel>
 
-                    <ListBox x:Name="TrackList" Grid.Row="1" Visibility="{Binding IsTrackView, Converter={StaticResource BoolToVis}}"
+                    <!-- Loading a page: glass placeholders for the header and songs, with a shine sweeping across.
+                         Kept laid out (Hidden, not Collapsed) so it appears the instant a page is opened; shown and
+                         cross-faded with the loaded page by MainWindow (see UpdateSkeleton). -->
+                    <StackPanel x:Name="PageSkeleton" Grid.RowSpan="2" Margin="24,28,24,0" IsHitTestVisible="False" ClipToBounds="True"
+                                Visibility="Hidden" Opacity="0">
+                        <Grid Margin="0,0,0,22">
+                            <local:GlassBlock Width="176" Height="176" HorizontalAlignment="Left" />
+                            <StackPanel Margin="200,0,0,0" VerticalAlignment="Bottom">
+                                <local:GlassBlock Width="340" Height="40" CornerRadius="10" HorizontalAlignment="Left" />
+                                <local:GlassBlock Width="220" Height="12" CornerRadius="6" Margin="0,16,0,0" HorizontalAlignment="Left" />
+                                <local:GlassBlock Width="440" Height="10" CornerRadius="5" Margin="0,14,0,0" HorizontalAlignment="Left" />
+                                <local:GlassBlock Width="300" Height="10" CornerRadius="5" Margin="0,8,0,0" HorizontalAlignment="Left" />
+                                <StackPanel Orientation="Horizontal" Margin="0,18,0,0">
+                                    <local:GlassBlock Width="52" Height="52" CornerRadius="26" />
+                                    <local:GlassBlock Width="36" Height="36" CornerRadius="18" Margin="16,0,0,0" />
+                                    <local:GlassBlock Width="36" Height="36" CornerRadius="18" Margin="10,0,0,0" />
+                                </StackPanel>
+                            </StackPanel>
+                        </Grid>
+                        <ItemsControl ItemsSource="{x:Static local:Placeholders.Rows}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate>
+                                    <Grid Height="52" Margin="8,0">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="36" />
+                                            <ColumnDefinition Width="48" />
+                                            <ColumnDefinition Width="5*" />
+                                            <ColumnDefinition Width="3*" />
+                                            <ColumnDefinition Width="56" />
+                                            <ColumnDefinition Width="44" />
+                                        </Grid.ColumnDefinitions>
+                                        <local:GlassBlock Width="12" Height="10" CornerRadius="3" />
+                                        <local:GlassBlock Grid.Column="1" Width="40" Height="40" CornerRadius="5" HorizontalAlignment="Right" />
+                                        <StackPanel Grid.Column="2" Margin="12,0,16,0" VerticalAlignment="Center">
+                                            <local:GlassBlock Height="11" CornerRadius="5" HorizontalAlignment="Left"
+                                                              Width="{Binding Converter={StaticResource SkeletonWidth}, ConverterParameter=230}" />
+                                            <local:GlassBlock Height="9" CornerRadius="4" Margin="0,8,0,0" HorizontalAlignment="Left"
+                                                              Width="{Binding Converter={StaticResource SkeletonWidth}, ConverterParameter=120}" />
+                                        </StackPanel>
+                                        <local:GlassBlock Grid.Column="3" Height="10" CornerRadius="5" HorizontalAlignment="Left"
+                                                          Width="{Binding Converter={StaticResource SkeletonWidth}, ConverterParameter=150}" />
+                                        <local:GlassBlock Grid.Column="5" Width="30" Height="10" CornerRadius="5" HorizontalAlignment="Right" Margin="0,0,4,0" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </StackPanel>
+
+                    <ListBox x:Name="TrackList" Grid.Row="1" Visibility="{Binding ShowTrackList, Converter={StaticResource BoolToVis}}" local:SmoothScroll.IsEnabled="True"
                              ContextMenuOpening="TrackList_ContextMenuOpening"
                              ItemContainerStyleSelector="{StaticResource TrackRows}"
                              Background="Transparent" BorderThickness="0" Padding="16,0,16,16"
                              ScrollViewer.HorizontalScrollBarVisibility="Disabled"
                              VirtualizingPanel.IsVirtualizing="True" VirtualizingPanel.VirtualizationMode="Recycling"
-                             VirtualizingPanel.ScrollUnit="Pixel">
+                             VirtualizingPanel.ScrollUnit="Pixel"
+                             VirtualizingPanel.CacheLength="2" VirtualizingPanel.CacheLengthUnit="Page">
                         <ListBox.ContextMenu>
                             <ContextMenu /> <!-- filled in TrackList_ContextMenuOpening -->
                         </ListBox.ContextMenu>
@@ -465,11 +624,51 @@
                                             </Button>
                                             <Button Style="{StaticResource IconButton}" Content="&#xE712;" FontSize="18" Width="44" Height="44" Margin="4,0,0,0"
                                                     ToolTip="More" Click="HeaderMore_Click" Visibility="{Binding HasTracks, Converter={StaticResource BoolToVis}}" />
-                                            <TextBlock Text="Loading…" Margin="16,0,0,0" VerticalAlignment="Center" Foreground="{DynamicResource SubtleTextBrush}"
-                                                       Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
+                                            <Button Style="{StaticResource PillButton}" Margin="10,0,0,0" Padding="16,8" Command="{Binding StartViewRadioCommand}"
+                                                    ToolTip="Endless radio from this artist's songs" Visibility="{Binding HasViewRadio, Converter={StaticResource BoolToVis}}">
+                                                <StackPanel Orientation="Horizontal">
+                                                    <TextBlock Text="&#xE93E;" FontFamily="{StaticResource IconFont}" FontSize="14" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                                    <TextBlock Text="Mix" VerticalAlignment="Center" />
+                                                </StackPanel>
+                                            </Button>
+                                            <local:LoadingDots Margin="16,0,0,0" DotSize="7" Fill="{DynamicResource SubtleTextBrush}" ToolTip="Loading"
+                                                               Visibility="{Binding IsLoading, Converter={StaticResource BoolToVis}}" />
                                         </StackPanel>
                                     </StackPanel>
                                 </Grid>
+                            </DataTemplate>
+
+                            <!-- Rows above the songs (search: artists), then the songs' label ("Top songs") -->
+                            <DataTemplate DataType="{x:Type m:TopSectionsMarker}">
+                                <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" Margin="8,0,8,0">
+                                    <ItemsControl ItemsSource="{Binding ViewTopSections}" ItemTemplate="{StaticResource SectionTemplate}" Margin="0,-18,0,8" />
+                                    <TextBlock Text="{Binding ViewSongsTitle}" FontSize="22" FontWeight="Bold" Margin="0,8,0,8"
+                                               Visibility="{Binding ViewSongsTitle, Converter={StaticResource NullToVis}}" />
+                                </StackPanel>
+                            </DataTemplate>
+
+                            <!-- Rows under the songs: an artist's albums, singles, videos, similar artists...; search's albums and playlists -->
+                            <DataTemplate DataType="{x:Type m:SectionsMarker}">
+                                <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" Margin="8,0,8,24">
+                                    <Button Style="{StaticResource PillButton}" Content="See all songs" HorizontalAlignment="Left" Margin="0,10,0,0" Padding="14,6"
+                                            Command="{Binding SeeAllSongsCommand}" Visibility="{Binding ViewAllSongsId, Converter={StaticResource NullToVis}}" />
+                                    <ItemsControl ItemsSource="{Binding ViewSections}" ItemTemplate="{StaticResource SectionTemplate}" />
+                                </StackPanel>
+                            </DataTemplate>
+
+                            <!-- Search: divider between your library's matches and the songs found beyond it -->
+                            <DataTemplate DataType="{x:Type m:SearchMoreMarker}">
+                                <StackPanel DataContext="{Binding DataContext, RelativeSource={RelativeSource AncestorType=Window}}" Margin="8,26,8,10"
+                                            Visibility="{Binding ShowSearchOnlineSection, Converter={StaticResource BoolToVis}}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <TextBlock Text="More songs" FontSize="22" FontWeight="Bold" VerticalAlignment="Center" />
+                                        <local:LoadingDots Margin="14,3,0,0" DotSize="6" Fill="{DynamicResource SubtleTextBrush}"
+                                                           Visibility="{Binding IsSearchingOnline, Converter={StaticResource BoolToVis}}" />
+                                    </StackPanel>
+                                    <TextBlock Text="Picked for you and from YouTube Music" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,2,0,0" />
+                                    <TextBlock Text="{Binding SearchOnlineStatus}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,12,0,0"
+                                               Visibility="{Binding SearchOnlineStatus, Converter={StaticResource NullToVis}}" />
+                                </StackPanel>
                             </DataTemplate>
 
                             <!-- song row -->
@@ -503,10 +702,12 @@
                                                     Background="{DynamicResource InactiveIconBrush}" VerticalAlignment="Center" ToolTip="Explicit">
                                                 <TextBlock Text="E" FontSize="9" FontWeight="Bold" Foreground="#FF101016" HorizontalAlignment="Center" VerticalAlignment="Center" />
                                             </Border>
-                                            <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" />
+                                            <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis"
+                                                       Style="{StaticResource LinkText}" HorizontalAlignment="Left" MouseLeftButtonUp="ArtistLink_Click" ToolTip="Go to artist" />
                                         </DockPanel>
                                     </StackPanel>
-                                    <TextBlock Grid.Column="3" Text="{Binding Album}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0" />
+                                    <TextBlock Grid.Column="3" Text="{Binding Album}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Margin="0,0,16,0"
+                                               Style="{StaticResource LinkText}" HorizontalAlignment="Left" MouseLeftButtonUp="AlbumLink_Click" ToolTip="Go to album" />
                                     <Button Grid.Column="4" Style="{StaticResource HeartButton}" Command="{Binding DataContext.ToggleLikeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
                                     <TextBlock Grid.Column="5" Text="{Binding DurationText}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" HorizontalAlignment="Right" Margin="0,0,4,0" />
                                 </Grid>
@@ -564,6 +765,8 @@
                         <!-- lyrics -->
                         <Grid Grid.Row="1" Visibility="{Binding ShowLyrics, Converter={StaticResource BoolToVis}}">
                             <TextBlock Text="{Binding LyricsStatus}" Foreground="{DynamicResource SubtleTextBrush}" Margin="20,8" TextWrapping="Wrap" />
+                            <local:LoadingDots DotSize="9" Fill="{DynamicResource SubtleTextBrush}" Margin="24,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                               ToolTip="Loading lyrics" Visibility="{Binding IsLyricsLoading, Converter={StaticResource BoolToVis}}" />
                             <ScrollViewer x:Name="LyricsScroller" VerticalScrollBarVisibility="Hidden">
                                 <!-- note: scrolled by LyricsAnimator with an eased animation -->
                                 <!-- Each line is its words (lit by a gradient sweep, see LyricsAnimator) or, for an
@@ -606,7 +809,7 @@
                         </Grid>
 
                         <!-- queue -->
-                        <ScrollViewer x:Name="QueueScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" Visibility="{Binding ShowQueue, Converter={StaticResource BoolToVis}}">
+                        <ScrollViewer x:Name="QueueScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding ShowQueue, Converter={StaticResource BoolToVis}}">
                             <StackPanel x:Name="QueueContent" Margin="10,0,10,16">
                                 <!-- Recently played sits above Now playing: scroll up to see it. -->
                                 <StackPanel x:Name="HistorySection" Visibility="{Binding HistoryView.Count, Converter={StaticResource CountToVis}}">
@@ -676,8 +879,10 @@
                         </Grid>
                     </Border>
                     <StackPanel Margin="14,0,0,0" VerticalAlignment="Center" MaxWidth="260">
-                        <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0" />
+                        <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="14" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" HorizontalAlignment="Left"
+                                   Style="{StaticResource LinkText}" MouseLeftButtonUp="AlbumLink_Click" ToolTip="Go to album" />
+                        <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"
+                                   HorizontalAlignment="Left" Style="{StaticResource LinkText}" MouseLeftButtonUp="ArtistLink_Click" ToolTip="Go to artist" />
                     </StackPanel>
                     <Button Style="{StaticResource HeartButton}" DataContext="{Binding CurrentTrack}" Margin="10,0,0,0" VerticalAlignment="Center"
                             Command="{Binding DataContext.ToggleLikeCommand, RelativeSource={RelativeSource AncestorType=Window}}" CommandParameter="{Binding}" />
@@ -919,14 +1124,7 @@
                         <Button Style="{StaticResource IconButton}" Content="&#xE8BB;" FontSize="12" HorizontalAlignment="Right" Command="{Binding CloseSettingsCommand}" ToolTip="Close (Esc)" />
                     </Grid>
 
-                    <TextBlock Text="APPEARANCE" Style="{StaticResource SectionLabel}" Margin="0,22,0,10" />
-                    <CheckBox Style="{StaticResource SwitchBox}" IsChecked="{Binding IsLightweight}">
-                        <TextBlock Text="Lightweight mode" FontSize="14" Foreground="{StaticResource TextBrush}" />
-                    </CheckBox>
-                    <TextBlock TextWrapping="Wrap" FontSize="12" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,6,60,0"
-                               Text="Flat dark look drawn by the CPU, with simple lyrics and no artwork backgrounds. Uses the least memory and power. Turn it off for the glass look." />
-
-                    <TextBlock Text="DISCORD" Style="{StaticResource SectionLabel}" Margin="0,24,0,10" />
+                    <TextBlock Text="DISCORD" Style="{StaticResource SectionLabel}" Margin="0,22,0,10" />
                     <CheckBox Style="{StaticResource SwitchBox}" IsChecked="{Binding ShowOnDiscord}">
                         <TextBlock Text="Show what I'm listening to" FontSize="14" Foreground="{StaticResource TextBrush}" />
                     </CheckBox>
@@ -946,6 +1144,18 @@
                             </TextBlock>
                         </StackPanel>
                         <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Clear" VerticalAlignment="Center" Command="{Binding ClearAudioCacheCommand}" />
+                    </Grid>
+                    <!-- How much audio to keep: more means more songs start instantly, offline-ready -->
+                    <Grid Margin="0,12,0,0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="64" />
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Text="Keep up to" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" Margin="0,0,14,0" />
+                        <Slider Grid.Column="1" Style="{StaticResource ThinSlider}" Minimum="0" Maximum="{Binding CacheStepMax, Mode=OneTime}" Value="{Binding CacheStep}"
+                                local:SliderDrag.WheelStep="1" VerticalAlignment="Center" ToolTip="Most songs to keep downloaded" />
+                        <TextBlock Grid.Column="2" Text="{Binding CacheLimitText}" FontSize="13" FontWeight="SemiBold" VerticalAlignment="Center" TextAlignment="Right" />
                     </Grid>
                     <Grid Margin="0,14,0,0">
                         <Grid.ColumnDefinitions>

@@ -20,6 +20,10 @@ public sealed partial class Track : ObservableObject
     // Set when the track came from YouTube directly, or once a Spotify track has been matched.
     public string? YouTubeId { get; set; }
 
+    /// <summary>YouTube Music links, when the song came from there (for "Go to artist / album").</summary>
+    public string? ArtistId { get; init; }
+    public string? AlbumId { get; init; }
+
     [ObservableProperty]
     [property: JsonIgnore]
     private bool _isLiked;
@@ -29,7 +33,8 @@ public sealed partial class Track : ObservableObject
     [property: JsonIgnore]
     private int _number;
 
-    [JsonIgnore] public string DurationText => Format(Duration);
+    /// <summary>Empty when the length isn't known (YouTube Music's top-song lists don't give it).</summary>
+    [JsonIgnore] public string DurationText => Duration > TimeSpan.Zero ? Format(Duration) : "";
 
     [JsonIgnore] public string PrimaryArtist => Artist.Split(',')[0].Trim();
 
@@ -44,7 +49,7 @@ public sealed partial class Track : ObservableObject
 }
 
 // Stored in settings.json by number; keep these values stable.
-public enum CollectionKind { Playlist = 1, Album = 2, YouTubePlaylist = 4 }
+public enum CollectionKind { Playlist = 1, Album = 2, YouTubePlaylist = 4, MusicAlbum = 8, MusicPlaylist = 16 }
 
 public sealed class PlaylistInfo
 {
@@ -80,6 +85,15 @@ public sealed record QueueItem(Track Track, QueueSource Source, int Index);
 
 /// <summary>Placeholder item: the header at the top of the song list.</summary>
 public sealed class HeaderMarker;
+
+/// <summary>Placeholder item: the "More songs" divider on Search, above the results found beyond your library.</summary>
+public sealed class SearchMoreMarker;
+
+/// <summary>Placeholder item: rows of tiles above the songs (and the songs' label).</summary>
+public sealed class TopSectionsMarker;
+
+/// <summary>Placeholder item: rows of tiles under the songs (an artist's albums, search's albums and playlists).</summary>
+public sealed class SectionsMarker;
 
 public enum LibraryItemKind { Liked, UserPlaylist, Saved, NewPlaylist, Import }
 

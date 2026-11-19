@@ -12,9 +12,17 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
   playlist link.
 - **Your own playlists** with a title, description, author and cover picture. Right-click any song to
   add it to one. Imported playlists can be edited too (they become your own copy).
-- **Search** across every song in your library.
-- **Two looks**: Glass (the default: frosted panels over a blurred, vivid version of the artwork) and
-  **Lightweight mode** (flat dark, drawn by the CPU, least memory). Switch it in Settings.
+- **Search** your library instantly, and all of YouTube Music as you type: songs, artists, albums and
+  playlists. Play any of them straight away.
+- **YouTube Music browsing**, no account: artist pages (top songs, all songs, albums, singles & EPs,
+  videos, live performances, playlists, "Fans might also like", and an endless **Mix**), album pages,
+  playlists of any length, and **Explore** (new albums & singles, trending, charts, top artists, moods &
+  genres). Save albums and playlists to your library; play, queue or add a whole artist, album or playlist
+  to one of your playlists from its right-click menu.
+- **Start Radio** from any song, **Go to Artist / Go to Album** from any song (also by clicking the names
+  in song lists and the player bar), and **Back** (title bar or the mouse's back button).
+- **Glass look**: frosted panels over a blurred, vivid version of the artwork. Pages that are loading show
+  glass placeholders with a shine sweeping across.
 - **Queue**: a resizable side panel (shared with Lyrics) with Up next and Recently played. Drag songs
   to reorder. The queue is saved between sessions.
 - **Right-click anything**: songs, playlists, albums, mixes and artists (on Home, in the Library, in
@@ -36,7 +44,8 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
 - Media keys, Space to play/pause, Ctrl+←/→ to skip.
 - Explicit songs play uncensored: YouTube Music marks explicit uploads, and Yesify picks the version
   that matches Spotify's.
-- The next song is pre-downloaded, so skips are near-instant (cache capped at 1 GB).
+- The next song is pre-downloaded, so skips are near-instant. Downloaded audio is kept up to a size you
+  pick in Settings (100 MB to 50 GB); the songs you play most are kept longest.
 
 Long playlists: the first 100 songs come from Spotify's public embed page, and the rest load in the
 background through Spotify's player backend, using the anonymous token the embed page hands every

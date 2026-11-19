@@ -2,7 +2,7 @@ using Yesify.Models;
 
 namespace Yesify.Services;
 
-public enum HomeItemKind { Mix, Album, Artist, Track }
+public enum HomeItemKind { Mix, Album, Artist, Track, MusicAlbum, MusicArtist, MusicPlaylist, MusicCategory }
 
 /// <summary>A tile on Home. Mixes carry their songs; a song tile carries its row so playing continues through it.</summary>
 public sealed class HomeItem
@@ -15,13 +15,26 @@ public sealed class HomeItem
     public string Description { get; init; } = "";
     public List<Track>? Tracks { get; set; }
     public int Index { get; init; }
+
+    /// <summary>YouTube Music page parameters (genres need them).</summary>
+    public string? Params { get; init; }
+
+    /// <summary>A genre tile's color.</summary>
+    public string? Color { get; init; }
 }
 
 public sealed class HomeSection
 {
-    public string Title { get; init; } = "";
+    public string Title { get; set; } = "";
     public string Subtitle { get; init; } = "";
     public List<HomeItem> Items { get; init; } = [];
+
+    /// <summary>"See all": the YouTube Music page with everything in this row.</summary>
+    public string? MoreId { get; set; }
+    public string? MoreParams { get; set; }
+
+    /// <summary>Show every tile, wrapping onto more rows, instead of one row.</summary>
+    public bool Wrap { get; init; }
 }
 
 public sealed class HomeData

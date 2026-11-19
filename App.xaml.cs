@@ -27,11 +27,8 @@ public partial class App : Application
     private DispatcherTimer? _trimTimer;
     // Memory upkeep, see Maintain().
     private DispatcherTimer? _maintenance;
-    private long _lastInputTicks = Environment.TickCount64;
     private long _lastTrimTicks;
-    private bool _inputSinceTrim = true;
     private bool _exiting;
-    private bool _switchingTheme;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -64,7 +61,7 @@ public partial class App : Application
         }
 
         _vm = new MainViewModel();
-        ApplyTheme(_vm.IsLightweight);
+        Theme.Apply(Resources);
         _vm.MiniPlayerRequested += ShowMiniPlayer;
         _vm.FullPlayerRequested += ShowMainWindow;
         _tray = new TrayIcon { IsPlaying = () => _vm.IsAudioPlaying };
@@ -80,7 +77,6 @@ public partial class App : Application
         _vm.PropertyChanged += (_, a) =>
         {
             if (a.PropertyName == nameof(MainViewModel.CurrentTrack)) UpdateTooltip();
-            if (a.PropertyName == nameof(MainViewModel.IsLightweight)) SwitchTheme();
         };
         SessionEnding += (_, _) => ExitApp();
 
@@ -152,7 +148,6 @@ public partial class App : Application
 
     private void AfterWindowClosed()
     {
-        if (_switchingTheme) return; // the window is about to be reopened
         UpdateUiVisible();
         if (_window == null && _mini == null && _vm!.ConsumeTrayHint())
             _tray?.ShowBalloon("Yesify is still playing", "Click the tray icon to open it again. Right-click it to exit.");
@@ -171,18 +166,12 @@ public partial class App : Application
 
     /// <summary>
     /// Most of what Yesify touches is needed only once (starting up, loading a view) and would otherwise
-    /// stay counted against it. Every 15 s: with no window open, trim once a minute (song changes and
-    /// downloads touch new memory); in lightweight mode, also trim with the window open once it's been
-    /// left alone for 10 s. Anything needed again comes back from RAM cheaply. Glass mode is left alone
+    /// stay counted against it. Every 15 s with no window open, trim once a minute (song changes and
+    /// downloads touch new memory). Anything needed again comes back from RAM cheaply. Memory is left alone
     /// while a window is open, since its animations would just touch the pages again.
     /// </summary>
     private void StartMaintenance()
     {
-        InputManager.Current.PreProcessInput += (_, _) =>
-        {
-            _lastInputTicks = Environment.TickCount64;
-            _inputSinceTrim = true;
-        };
         _maintenance = new DispatcherTimer(TimeSpan.FromSeconds(15), DispatcherPriority.Background, (_, _) => Maintain(), Dispatcher);
         _maintenance.Start();
     }
@@ -199,12 +188,6 @@ public partial class App : Application
                 _lastTrimTicks = now;
             }
         }
-        else if (_vm.IsLightweight && _inputSinceTrim && now - _lastInputTicks >= 10_000)
-        {
-            TrimMemory();
-            _lastTrimTicks = now;
-            _inputSinceTrim = false;
-        }
     }
 
     /// <summary>UI refresh only runs while some window shows it.</summary>
@@ -214,56 +197,6 @@ public partial class App : Application
     {
         var t = _vm?.CurrentTrack;
         _tray?.SetTooltip(t == null ? "Yesify" : $"Yesify · {t.Title} - {t.Artist}");
-    }
-
-    // ---------------------------------------------------------------- theme
-
-    /// <summary>
-    /// Lightweight: flat dark panels, drawn by the CPU so the graphics driver never loads (least memory).
-    /// Glass: translucent panels over the artwork background, drawn by the GPU.
-    /// </summary>
-    private void ApplyTheme(bool lightweight)
-    {
-        Theme.Apply(Resources, lightweight);
-
-        Frost.IsGlass = !lightweight;
-
-        var mode = lightweight ? RenderMode.SoftwareOnly : RenderMode.Default;
-        RenderOptions.ProcessRenderMode = mode;
-        foreach (var w in new Window?[] { _window, _mini })
-            if (w != null && PresentationSource.FromVisual(w) is HwndSource source)
-                source.CompositionTarget.RenderMode = mode;
-    }
-
-    /// <summary>
-    /// Applies the new look and reopens the open windows, so everything (drawing mode, colors picked by
-    /// converters) comes back in the new theme. Playback state lives in the view model and is untouched.
-    /// </summary>
-    private void SwitchTheme()
-    {
-        ApplyTheme(_vm!.IsLightweight);
-        Dispatcher.BeginInvoke(() =>
-        {
-            var reopenMain = _window != null;
-            var reopenMini = _mini != null;
-            var mainState = _window?.WindowState;
-            _switchingTheme = true;
-            _window?.Close();
-            _mini?.Close();
-            _switchingTheme = false;
-            if (reopenMain)
-            {
-                ShowMainWindow();
-                if (mainState == WindowState.Maximized) _window!.WindowState = WindowState.Maximized;
-            }
-            if (reopenMini) ShowMiniPlayer();
-        });
-    }
-
-    private static T Frozen<T>(T brush) where T : Freezable
-    {
-        brush.Freeze();
-        return brush;
     }
 
     // ---------------------------------------------------------------- exit

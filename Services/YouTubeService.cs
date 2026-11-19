@@ -19,9 +19,10 @@ namespace Yesify.Services;
 /// <see cref="MaxCacheBytes"/>: the playing and next songs are always kept, songs that were only prefetched
 /// or skipped go first, and songs played often and recently are kept longest.
 /// </summary>
-public sealed class YouTubeService
+public sealed partial class YouTubeService
 {
-    public const long MaxCacheBytes = 100L * 1024 * 1024;
+    /// <summary>Set from Settings (Storage → Keep up to).</summary>
+    public static long MaxCacheBytes { get; set; } = 100L * 1024 * 1024;
     private const string StatsFile = "audio-cache.json";
 
     private static readonly string CacheDir = Path.Combine(Storage.LocalDir, "cache");
@@ -68,6 +69,25 @@ public sealed class YouTubeService
             throw new InvalidOperationException("this song isn't available on Spotify anymore");
         }
 
+        var id = await VideoIdAsync(track, ct);
+
+        var cached = Directory.EnumerateFiles(CacheDir, id + ".*").FirstOrDefault(f => !f.EndsWith(".part") && !f.EndsWith(".tmp"));
+        if (cached != null)
+        {
+            File.SetLastAccessTimeUtc(cached, DateTime.UtcNow);
+            Mp4Fixer.RemoveEditList(cached); // files cached by older versions
+            return cached;
+        }
+
+        // Share one download between "play now" and "prefetch"; the download itself is not cancelled
+        // by a skip, so a half-finished file is still useful if the user comes back to it.
+        var lazy = _downloads.GetOrAdd(id, key => new Lazy<Task<string>>(() => DownloadWithRetryAsync(key)));
+        return await lazy.Value.WaitAsync(ct);
+    }
+
+    /// <summary>The YouTube video a song plays (matched and cached for Spotify songs).</summary>
+    public async Task<string> VideoIdAsync(Track track, CancellationToken ct)
+    {
         // Spotify songs always go through the matcher (instant once matched), so a wrong video saved in a
         // playlist or session by an older version gets replaced.
         if (track.YouTubeId == null || track.SpotifyId != null)
@@ -83,20 +103,7 @@ public sealed class YouTubeService
                 if (match.Value.IsCompleted) _matches.TryRemove(track.Key, out _);
             }
         }
-        var id = track.YouTubeId;
-
-        var cached = Directory.EnumerateFiles(CacheDir, id + ".*").FirstOrDefault(f => !f.EndsWith(".part") && !f.EndsWith(".tmp"));
-        if (cached != null)
-        {
-            File.SetLastAccessTimeUtc(cached, DateTime.UtcNow);
-            Mp4Fixer.RemoveEditList(cached); // files cached by older versions
-            return cached;
-        }
-
-        // Share one download between "play now" and "prefetch"; the download itself is not cancelled
-        // by a skip, so a half-finished file is still useful if the user comes back to it.
-        var lazy = _downloads.GetOrAdd(id, key => new Lazy<Task<string>>(() => DownloadWithRetryAsync(key)));
-        return await lazy.Value.WaitAsync(ct);
+        return track.YouTubeId!;
     }
 
     private async Task<string> DownloadWithRetryAsync(string videoId)
@@ -173,6 +180,9 @@ public sealed class YouTubeService
             if (Usage.TryGetValue(track.YouTubeId, out var stats)) stats.Finished++;
         SaveUsage();
     }
+
+    /// <summary>After the limit is lowered in Settings: make room in the background.</summary>
+    public void ApplyCacheLimit() => Task.Run(() => TrimCache());
 
     /// <summary>Downloads the song that plays next, after a short wait so fast skipping doesn't download every song.</summary>
     public void Prefetch(Track? track)
@@ -313,6 +323,22 @@ public sealed class YouTubeService
     /// <summary>Song search on YouTube Music (the public InnerTube API its website uses; no account).</summary>
     private async Task<List<Candidate>> SearchMusicAsync(string query, CancellationToken ct)
     {
+        var results = new List<Candidate>();
+        foreach (var song in await MusicSongsAsync(query, ct))
+        {
+            results.Add(new Candidate(song.VideoId, song.Title, song.Artists, song.Duration, song.IsExplicit, true));
+            if (results.Count >= 10) break;
+        }
+        return results;
+    }
+
+    private sealed record MusicSong(string VideoId, string Title, string Artists, string Album, TimeSpan? Duration, bool IsExplicit, string? ImageUrl);
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"=w\d+-h\d+")]
+    private static partial System.Text.RegularExpressions.Regex ThumbSize();
+
+    private async Task<List<MusicSong>> MusicSongsAsync(string query, CancellationToken ct)
+    {
         var body = new JsonObject
         {
             ["context"] = new JsonObject
@@ -332,7 +358,7 @@ public sealed class YouTubeService
         resp.EnsureSuccessStatusCode();
         var json = JsonNode.Parse(await resp.Content.ReadAsStringAsync(ct));
 
-        var results = new List<Candidate>();
+        var results = new List<MusicSong>();
         foreach (var item in FindAll(json, "musicResponsiveListItemRenderer"))
         {
             var videoId = (string?)item["playlistItemData"]?["videoId"];
@@ -345,8 +371,12 @@ public sealed class YouTubeService
             // Second column reads "Artist(s) • Album • 3:08".
             var parts = Text(columns[1]).Split(" • ");
             var explicitBadge = item["badges"]?.ToJsonString().Contains("MUSIC_EXPLICIT_BADGE") == true;
-            results.Add(new Candidate(videoId, Text(columns[0]), parts[0], ParseDuration(parts[^1]), explicitBadge, true));
-            if (results.Count >= 10) break;
+            var thumbs = item["thumbnail"]?["musicThumbnailRenderer"]?["thumbnail"]?["thumbnails"]?.AsArray();
+            var thumb = (string?)thumbs?.LastOrDefault()?["url"];
+            if (thumb != null) thumb = ThumbSize().Replace(thumb, "=w300-h300"); // the listed size is tiny
+            results.Add(new MusicSong(videoId, Text(columns[0]), parts[0], parts.Length >= 3 ? parts[1] : "",
+                                      ParseDuration(parts[^1]), explicitBadge, thumb));
+            if (results.Count >= 30) break;
         }
         return results;
     }

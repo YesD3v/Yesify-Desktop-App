@@ -21,7 +21,7 @@ public interface IFrostSource
 /// </summary>
 public static class Frost
 {
-    /// <summary>Set by the theme: frost in glass mode, plain backgrounds in lightweight.</summary>
+    /// <summary>Set by the theme (always on since the glass look is the only one).</summary>
     public static bool IsGlass { get; set; }
 
     private const double BlurRadius = 36;

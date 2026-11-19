@@ -77,6 +77,10 @@ public static class AsyncImage
             Loading[key] = task;
         }
         var image = await task;
+        // A page's covers tend to arrive together. Finishing on the dispatcher's normal priority would put
+        // all of them ahead of the next frame (normal outranks rendering), which shows as a hitch; at
+        // background priority frames keep being drawn in between, so covers stream in smoothly.
+        await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
         Loading.Remove(key);
         if (image != null)
         {

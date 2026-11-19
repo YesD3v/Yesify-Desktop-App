@@ -24,6 +24,11 @@ public sealed partial class MainViewModel
 
     public bool IsHomeView => CurrentView == ViewMode.Home;
 
+    /// <summary>Placeholder rows that shimmer while the very first Home is built.</summary>
+    public bool ShowHomeSkeleton => IsHomeBuilding && HomeSections.Count == 0;
+
+    partial void OnIsHomeBuildingChanged(bool value) => OnPropertyChanged(nameof(ShowHomeSkeleton));
+
     public string Greeting => DateTime.Now.Hour switch
     {
         < 5 => "Good evening",
@@ -35,6 +40,7 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void ShowHome()
     {
+        Visit("home", () => { ShowHome(); return Task.CompletedTask; });
         _viewCts?.Cancel();
         IsLoading = false;
         CurrentCollection = null;
@@ -66,7 +72,7 @@ public sealed partial class MainViewModel
         _homeCts?.Cancel();
         var cts = _homeCts = new CancellationTokenSource(TimeSpan.FromMinutes(3));
         IsHomeBuilding = true;
-        if (HomeSections.Count == 0) HomeStatus = "Finding music for you…";
+        if (HomeSections.Count == 0) HomeStatus = ""; // the skeleton shows it's on its way
         try
         {
             _recommender ??= new Recommender(_artists);
@@ -95,7 +101,12 @@ public sealed partial class MainViewModel
         }
         finally
         {
-            if (_homeCts == cts) IsHomeBuilding = false;
+            if (_homeCts == cts)
+            {
+                IsHomeBuilding = false;
+                if (HomeSections.Count == 0 && HomeStatus.Length == 0)
+                    HomeStatus = "Play or like a few songs (or import a playlist) and Home fills up with mixes and songs picked for you.";
+            }
         }
     }
 
@@ -104,8 +115,8 @@ public sealed partial class MainViewModel
         _homeBuiltUtc = home.BuiltUtc;
         HomeSections.Clear();
         foreach (var s in home.Sections) HomeSections.Add(s);
-        HomeStatus = home.Sections.Count > 0 ? ""
-            : IsHomeBuilding ? "Finding music for you…"
+        OnPropertyChanged(nameof(ShowHomeSkeleton));
+        HomeStatus = home.Sections.Count > 0 || IsHomeBuilding ? ""
             : "Play or like a few songs (or import a playlist) and Home fills up with mixes and songs picked for you.";
     }
 
@@ -115,6 +126,7 @@ public sealed partial class MainViewModel
         switch (item?.Kind)
         {
             case HomeItemKind.Mix when item.Tracks != null:
+                Visit("mix:" + item.Title, () => OpenHomeItem(item));
                 SelectedPlaylist = null;
                 return LoadViewAsync(_ =>
                 {
@@ -125,10 +137,18 @@ public sealed partial class MainViewModel
                 SelectedPlaylist = null;
                 return OpenSpotifyCollectionAsync("album", item.Id);
             case HomeItemKind.Artist when item.Id != null:
-                return OpenArtistAsync(item.Id);
+                return OpenArtistAsync(item.Id, item.Title);
             case HomeItemKind.Track when item.Tracks != null:
                 StartContext(item.Tracks.ToList(), item.Index);
                 break;
+            case HomeItemKind.MusicAlbum when item.Id != null:
+                return OpenMusicAlbumAsync(item.Id);
+            case HomeItemKind.MusicArtist when item.Id != null:
+                return OpenMusicArtistAsync(item.Id);
+            case HomeItemKind.MusicPlaylist when item.Id != null:
+                return OpenMusicPlaylistAsync(item.Id);
+            case HomeItemKind.MusicCategory when item.Id != null:
+                return OpenMusicBrowseAsync(item.Id, item.Params, item.Title);
         }
         return Task.CompletedTask;
     }
@@ -152,6 +172,11 @@ public sealed partial class MainViewModel
                     var album = (await _spotify.GetAsync("album", item.Id, CancellationToken.None)).Tracks;
                     StatusText = "";
                     return album;
+                case HomeItemKind.MusicAlbum or HomeItemKind.MusicPlaylist or HomeItemKind.MusicArtist:
+                    StatusText = $"Loading “{item.Title}”…";
+                    var music = await MusicItemTracksAsync(item);
+                    StatusText = "";
+                    return music;
                 case HomeItemKind.Artist when item.Id != null:
                     StatusText = $"Loading “{item.Title}”…";
                     var page = await _artists.GetArtistAsync(item.Id, CancellationToken.None)
@@ -170,19 +195,35 @@ public sealed partial class MainViewModel
         return null;
     }
 
-    /// <summary>An artist's popular songs, with who fans also like underneath.</summary>
-    private Task OpenArtistAsync(string id)
+    /// <summary>
+    /// A Spotify artist from Home: opens their full YouTube Music page (top songs, albums, singles, videos,
+    /// similar artists), or Spotify's popular songs if YouTube Music doesn't have them.
+    /// </summary>
+    private Task OpenArtistAsync(string id, string name) => OpenMusicPageAsync("spotify-artist:" + id, async ct =>
     {
-        SelectedPlaylist = null;
-        return LoadViewAsync(async ct =>
+        try
         {
-            var page = await _artists.GetArtistAsync(id, ct) ?? throw new InvalidOperationException("Couldn't load that artist from Spotify.");
-            _artists.Save();
-            if (page.Related.Count > 0) ViewDescription = "Fans also like " + string.Join(", ", page.Related.Take(6).Select(r => r.Name));
-            var listeners = page.MonthlyListeners > 0 ? $"{page.MonthlyListeners:N0} monthly listeners · " : "";
-            return (page.Name, $"{listeners}Popular songs", page.ImageUrl, page.TopTracks.Select(t => t.ToTrack()).ToList());
-        });
-    }
+            if (await _music.FindArtistAsync(name, ct) is { Id: { } channel } found &&
+                new string(found.Title.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray()) ==
+                new string(name.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray()))
+                return await _music.ArtistAsync(channel, ct);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* Spotify's page below */ }
+
+        var page = await _artists.GetArtistAsync(id, ct) ?? throw new InvalidOperationException("Couldn't load that artist.");
+        _artists.Save();
+        var result = new MusicPage
+        {
+            Title = page.Name,
+            Subtitle = page.MonthlyListeners > 0 ? $"{page.MonthlyListeners:N0} monthly listeners" : "Artist",
+            ImageUrl = page.ImageUrl,
+            SongsTitle = "Popular",
+            Description = page.Related.Count > 0 ? "Fans also like " + string.Join(", ", page.Related.Take(6).Select(r => r.Name)) : "",
+        };
+        result.Songs.AddRange(page.TopTracks.Select(t => t.ToTrack()));
+        return result;
+    });
 
     // ---------------------------------------------------------------- listening history
 
