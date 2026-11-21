@@ -1,6 +1,16 @@
-<p align="center"><img src="Assets/logo.png" width="120" alt="Yesify"></p>
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="Assets/banner.png">
+    <source media="(prefers-color-scheme: light)" srcset="Assets/banner-light.png">
+    <img src="Assets/banner.png" width="560" alt="Yesify">
+  </picture>
+</p>
 
-# Yesify
+<p align="center"><b>A bold, native music player for Windows.</b><br>All of YouTube Music and your Spotify playlists. No account, no ads, unlimited skips.</p>
+
+<p align="center"><a href="https://github.com/YesD3v/Yesify-Desktop-App/releases/latest/download/Yesify.exe"><b>Download Yesify.exe</b></a> &nbsp;·&nbsp; <a href="https://yesd3v.github.io/yesify-desktop/">Website</a></p>
+
+## About
 
 A small, native Windows music player (C# / WPF, no WebView, no Electron).
 Paste a Spotify link and it plays, with the audio coming from YouTube.
