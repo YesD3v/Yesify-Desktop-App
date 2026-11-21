@@ -110,8 +110,9 @@ public static class CoverColors
             double bl = px[i], g = px[i + 1], r = px[i + 2];
             var max = Math.Max(r, Math.Max(g, bl));
             var min = Math.Min(r, Math.Min(g, bl));
-            var sat = max == 0 ? 0 : (max - min) / max;
-            var weight = 0.15 + sat * sat; // vivid pixels count more than greys
+            // Chroma, not relative saturation: a near-black pixel like (2,5,3) isn't "vivid", it's black.
+            var sat = (max - min) / 255;
+            var weight = 0.15 + sat * sat; // vivid pixels count more than greys and blacks
             var acc = x * h + y * w < w * h ? a : b; // split along the diagonal
             acc[0] += r * weight; acc[1] += g * weight; acc[2] += bl * weight; acc[3] += weight;
             all[0] += r * weight; all[1] += g * weight; all[2] += bl * weight; all[3] += weight;
@@ -125,8 +126,13 @@ public static class CoverColors
         if (acc[3] <= 0) return Fallback.A;
         double r = acc[0] / acc[3] / 255, g = acc[1] / acc[3] / 255, b = acc[2] / acc[3] / 255;
         RgbToHsl(r, g, b, out var hue, out var s, out var l);
-        s = Math.Min(1, s * (vivid ? 1.45 : 1.25));
-        l = vivid ? Math.Clamp(l, 0.26, 0.48) : Math.Clamp(l, 0.16, 0.38);
+        // How colorful the average really is (0 = neutral black/grey). Near-neutral covers stay neutral
+        // and dark instead of having a faint tint amplified into e.g. green.
+        var chroma = Math.Max(r, Math.Max(g, b)) - Math.Min(r, Math.Min(g, b));
+        var tint = Math.Clamp((chroma - 0.03) / 0.12, 0, 1);
+        s = Math.Min(1, s * (vivid ? 1.65 : 1.25) * tint);
+        var lMin = vivid ? 0.10 + 0.16 * tint : 0.08 + 0.08 * tint;
+        l = vivid ? Math.Clamp(l, lMin, 0.48) : Math.Clamp(l, lMin, 0.38);
         HslToRgb(hue, s, l, out r, out g, out b);
         return Color.FromRgb((byte)(r * 255), (byte)(g * 255), (byte)(b * 255));
     }

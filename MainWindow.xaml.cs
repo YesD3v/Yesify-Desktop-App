@@ -1,4 +1,4 @@
-using System.ComponentModel;
+﻿using System.ComponentModel;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -23,6 +23,7 @@ public partial class MainWindow : Window, IFrostSource
 
     private readonly MainViewModel _vm;
     private readonly LyricsAnimator _lyrics;
+    private readonly LyricsAnimator _cinemaLyrics;
     private string? _backdropUrl;
     private bool _backdropOnA;
 
@@ -47,10 +48,12 @@ public partial class MainWindow : Window, IFrostSource
 
         _lyrics = new LyricsAnimator(vm, LyricsList, LyricsScroller);
         LyricsList.IsVisibleChanged += (_, _) => _lyrics.Refresh();
+        _cinemaLyrics = new LyricsAnimator(vm, CinemaLyricsList, CinemaLyricsScroller, anchor: 0.4);
+        CinemaLyricsList.IsVisibleChanged += (_, _) => _cinemaLyrics.Refresh();
 
-        StateChanged += (_, _) => { UpdateMaximizedState(); RepaintAll(); };
+        StateChanged += (_, _) => { UpdateMaximizedState(); RepaintAll(); UpdateBackdropMotion(); };
         Activated += (_, _) => RepaintAll();
-        IsVisibleChanged += (_, _) => RepaintAll();
+        IsVisibleChanged += (_, _) => { RepaintAll(); UpdateBackdropMotion(); };
         Microsoft.Win32.SystemEvents.SessionSwitch += OnSystemWake;
         Microsoft.Win32.SystemEvents.PowerModeChanged += OnSystemWake;
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnSystemWake;
@@ -58,6 +61,18 @@ public partial class MainWindow : Window, IFrostSource
         Vm.HomeSections.CollectionChanged += OnHomeSectionsChanged;
         Vm.Tracks.CollectionChanged += OnSongCountChanged;
         Vm.SearchOnline.CollectionChanged += OnSongCountChanged;
+        // Library: a header, rows of tiles cut to the page width, then matching songs (virtualized).
+        LibraryList.ItemsSource = new CompositeCollection
+        {
+            new LibraryHeaderMarker(),
+            new CollectionContainer { Collection = _libraryRows },
+            new LibrarySongsMarker(),
+        };
+        Vm.LibraryItems.CollectionChanged += OnLibraryItemsChanged;
+        LibraryList.SizeChanged += (_, _) => RebuildLibraryRows(force: false);
+        Vm.BackdropSettingsChanged += ApplyBackdropSettings;
+        ApplyBackdropSettings();
+        SetUpTaskbarButtons();
         UpdateVirtualization();
         UpdateRightPanel();
         UpdateSidebarWidth();
@@ -102,10 +117,13 @@ public partial class MainWindow : Window, IFrostSource
         Vm.HomeSections.CollectionChanged -= OnHomeSectionsChanged;
         Vm.Tracks.CollectionChanged -= OnSongCountChanged;
         Vm.SearchOnline.CollectionChanged -= OnSongCountChanged;
+        Vm.LibraryItems.CollectionChanged -= OnLibraryItemsChanged;
+        Vm.BackdropSettingsChanged -= ApplyBackdropSettings;
         Microsoft.Win32.SystemEvents.SessionSwitch -= OnSystemWake;
         Microsoft.Win32.SystemEvents.PowerModeChanged -= OnSystemWake;
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnSystemWake;
         _lyrics.Stop();
+        _cinemaLyrics.Stop();
         DataContext = null;
         base.OnClosed(e);
     }
@@ -118,6 +136,17 @@ public partial class MainWindow : Window, IFrostSource
             case nameof(MainViewModel.IsPlaying):
             case nameof(MainViewModel.ShowLyrics):
                 _lyrics.Refresh();
+                _cinemaLyrics.Refresh();
+                if (e.PropertyName == nameof(MainViewModel.IsPlaying)) UpdateTaskbarButtons();
+                break;
+            case nameof(MainViewModel.IsCinema):
+                UpdateCinema();
+                break;
+            case nameof(MainViewModel.IsMuted):
+                UpdateTaskbarButtons();
+                break;
+            case nameof(MainViewModel.LibraryListMode):
+                RebuildLibraryRows(force: true);
                 break;
             case nameof(MainViewModel.IsRightPanelOpen):
                 UpdateRightPanel();
@@ -166,19 +195,17 @@ public partial class MainWindow : Window, IFrostSource
             return;
         }
         if (PageSkeleton.Visibility != Visibility.Visible) return;
-        if (_skeletonClock.ElapsedMilliseconds < 60)
-        {
-            // Ready before the skeleton was even drawn: no cross-fade, just the usual entrance.
-            HideSkeleton();
-            EaseInView();
-            return;
-        }
 
+        // Every page (even one that's ready at once, like Liked Songs) is built invisibly behind the
+        // skeleton and then cross-faded in, so building it never lands in the middle of an animation.
         _revealing = true;
         TrackList.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.Zero)); // invisible while it's built
-        Dispatcher.BeginInvoke(() =>
+        Dispatcher.BeginInvoke(async () =>
         {
             // Loaded priority runs after layout and the next render: the page is built by now.
+            // The shimmer stays up a moment at least, so a fast page doesn't flash it.
+            var wait = 240 - (int)_skeletonClock.ElapsedMilliseconds;
+            if (wait > 0) await Task.Delay(wait);
             _revealing = false;
             if (Vm.ShowPageSkeleton) return; // another page started loading meanwhile
             var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
@@ -228,7 +255,7 @@ public partial class MainWindow : Window, IFrostSource
     /// </summary>
     private void UpdateVirtualization()
     {
-        var virtualize = Vm.Tracks.Count + Vm.SearchOnline.Count > 150;
+        var virtualize = Vm.Tracks.Count + Vm.SearchOnline.Count > 40;
         if (virtualize == _virtualizing) return;
         _virtualizing = virtualize;
         VirtualizingPanel.SetIsVirtualizing(TrackList, virtualize);
@@ -264,9 +291,95 @@ public partial class MainWindow : Window, IFrostSource
         show.BeginAnimation(OpacityProperty, new DoubleAnimation(1, duration));
         hide.BeginAnimation(OpacityProperty, new DoubleAnimation(0, duration));
 
-        TintA.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(backdrop.A, duration));
-        TintB.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(backdrop.B, duration));
-        TintC.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(backdrop.C, duration));
+        _coverTint = (backdrop.A, backdrop.B, backdrop.C);
+        if (Vm.BackdropMode != "color") AnimateTint(backdrop.A, backdrop.B, backdrop.C, duration);
+    }
+
+    private (Color A, Color B, Color C) _coverTint = (CoverColors.Fallback.A, CoverColors.Fallback.B, CoverColors.Fallback.B);
+
+    private void AnimateTint(Color a, Color b, Color c, Duration duration)
+    {
+        TintA.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(a, duration));
+        TintB.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(b, duration));
+        TintC.BeginAnimation(GradientStop.ColorProperty, new ColorAnimation(c, duration));
+    }
+
+    /// <summary>
+    /// Settings, Background: the cover or custom colors, tint strength, brightness, motion. Called at
+    /// start and whenever one changes; changes ease in.
+    /// </summary>
+    private void ApplyBackdropSettings()
+    {
+        var d = new Duration(TimeSpan.FromMilliseconds(450));
+        var custom = Vm.BackdropMode == "color";
+        BackImages.BeginAnimation(OpacityProperty, new DoubleAnimation(custom ? 0 : 1, d));
+        TintLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(custom ? 1 : Vm.BackdropTint / 100, d));
+        var bright = Vm.BackdropBrightness;
+        DimLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(Math.Clamp((100 - bright) / 50, 0, 1), d));
+        DarkLayer.BeginAnimation(OpacityProperty, new DoubleAnimation(bright < 50 ? (50 - bright) / 50 * 0.65 : 0, d));
+        if (custom)
+        {
+            var a = Vm.BackdropColorA;
+            var b = Vm.BackdropColorB;
+            var mid = Color.FromRgb((byte)((a.R + b.R) / 2), (byte)((a.G + b.G) / 2), (byte)((a.B + b.B) / 2));
+            AnimateTint(a, b, mid, d);
+        }
+        else AnimateTint(_coverTint.A, _coverTint.B, _coverTint.C, d);
+        UpdateBackdropMotion();
+    }
+
+    private bool _motionOn;
+    private double _motionFps;
+
+    /// <summary>
+    /// Motion: the blurred cover slowly turns and drifts (it's a cached bitmap, so moving it is cheap for the
+    /// GPU), and the tint's direction swings. Runs at 30 fps; stopped while the window is minimized or hidden.
+    /// </summary>
+    private void UpdateBackdropMotion()
+    {
+        var on = Vm.BackdropMotion && IsVisible && WindowState != WindowState.Minimized;
+        var fps = Vm.BackdropMotionFps;
+        if (on == _motionOn && (!on || fps == _motionFps)) return;
+        _motionOn = on;
+        _motionFps = fps;
+        if (BackImages.RenderTransform is not TransformGroup { Children: [ScaleTransform scale, RotateTransform rotate, TranslateTransform move] })
+            return;
+        if (!on)
+        {
+            var settle = new Duration(TimeSpan.FromMilliseconds(900));
+            var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+            scale.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1, settle) { EasingFunction = ease });
+            scale.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1, settle) { EasingFunction = ease });
+            rotate.BeginAnimation(RotateTransform.AngleProperty, new DoubleAnimation(0, settle) { EasingFunction = ease });
+            move.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(0, settle) { EasingFunction = ease });
+            move.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(0, settle) { EasingFunction = ease });
+            TintBrush.BeginAnimation(LinearGradientBrush.StartPointProperty, null);
+            TintBrush.BeginAnimation(LinearGradientBrush.EndPointProperty, null);
+            return;
+        }
+        DoubleAnimation Loop(double from, double to, double seconds)
+        {
+            var a = new DoubleAnimation(from, to, TimeSpan.FromSeconds(seconds))
+            {
+                AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever,
+                EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut },
+            };
+            Timeline.SetDesiredFrameRate(a, (int)fps);
+            return a;
+        }
+        scale.BeginAnimation(ScaleTransform.ScaleXProperty, Loop(1.22, 1.34, 17));
+        scale.BeginAnimation(ScaleTransform.ScaleYProperty, Loop(1.22, 1.34, 17));
+        rotate.BeginAnimation(RotateTransform.AngleProperty, Loop(-9, 9, 23));
+        move.BeginAnimation(TranslateTransform.XProperty, Loop(-70, 70, 29));
+        move.BeginAnimation(TranslateTransform.YProperty, Loop(45, -45, 19));
+        PointAnimation Swing(Point from, Point to)
+        {
+            var a = new PointAnimation(from, to, TimeSpan.FromSeconds(21)) { AutoReverse = true, RepeatBehavior = RepeatBehavior.Forever, EasingFunction = new SineEase() };
+            Timeline.SetDesiredFrameRate(a, (int)fps);
+            return a;
+        }
+        TintBrush.BeginAnimation(LinearGradientBrush.StartPointProperty, Swing(new Point(0, 0), new Point(1, 0)));
+        TintBrush.BeginAnimation(LinearGradientBrush.EndPointProperty, Swing(new Point(1, 1), new Point(0, 1)));
     }
 
     // ---------------------------------------------------------------- right panel
@@ -293,7 +406,12 @@ public partial class MainWindow : Window, IFrostSource
     protected override void OnPreviewKeyDown(KeyEventArgs e)
     {
         var typing = Keyboard.FocusedElement is TextBox;
-        if (e.Key == Key.Escape && (Vm.IsSettingsOpen || Vm.IsEditingPlaylist || Vm.IsImporting))
+        if (e.Key == Key.Escape && Vm.IsCinema && !Vm.IsSettingsOpen && !Vm.IsEditingPlaylist && !Vm.IsImporting)
+        {
+            Vm.IsCinema = false;
+            e.Handled = true;
+        }
+        else if (e.Key == Key.Escape && (Vm.IsSettingsOpen || Vm.IsEditingPlaylist || Vm.IsImporting))
         {
             Vm.CloseSettingsCommand.Execute(null);
             Vm.CancelEditPlaylistCommand.Execute(null);
@@ -612,6 +730,8 @@ public partial class MainWindow : Window, IFrostSource
     {
         if (sender is not FrameworkElement { DataContext: LibraryItem item, ContextMenu: { } menu }) return;
         menu.Items.Clear();
+        menu.Items.Add(Item(Vm.IsPinned(item) ? "Unpin" : "Pin to Top", () => Vm.TogglePin(item)));
+        menu.Items.Add(new Separator());
         // Fetched at most once per menu, however many entries are clicked.
         Task<List<Track>?>? loading = null;
         void AddCollection()
@@ -637,6 +757,9 @@ public partial class MainWindow : Window, IFrostSource
                 menu.Items.Add(Item("Edit…", () => _ = Vm.EditImportedAsync(item.Saved)));
                 menu.Items.Add(Item("Remove from Library", () => Vm.RemoveSavedCommand.Execute(item.Saved)));
                 break;
+            case LibraryItemKind.Album:
+                menu.Items.Add(Item("Open Album", () => Vm.OpenLibraryItemCommand.Execute(item)));
+                break;
             default:
                 e.Handled = true; // New / Import: nothing to manage
                 break;
@@ -659,6 +782,11 @@ public partial class MainWindow : Window, IFrostSource
     private bool _sidebarSized;
 
     /// <summary>Slides the sidebar open or shut (instantly the first time, when the window opens).</summary>
+    /// <summary>
+    /// The sidebar slides open or shut. While it moves, the page keeps its final width (pinned to the
+    /// panel's left edge, the panel clipping it) so it's laid out once instead of re-flowing every frame:
+    /// only the panel's edge moves, which is what made the animation choppy before.
+    /// </summary>
     private void UpdateSidebarWidth()
     {
         var target = Vm.SidebarCollapsed ? 72.0 : 248.0;
@@ -669,10 +797,42 @@ public partial class MainWindow : Window, IFrostSource
             SidebarColumn.Width = new GridLength(target);
             return;
         }
-        BeginAnimation(SidebarWidthProperty, new DoubleAnimation(target, TimeSpan.FromMilliseconds(280))
+        if (MainPanel.ActualWidth > 0)
+        {
+            MainContent.Width = Math.Max(0, MainPanel.ActualWidth - MainPanel.BorderThickness.Left - MainPanel.BorderThickness.Right - (target - SidebarWidth));
+            MainContent.HorizontalAlignment = HorizontalAlignment.Left;
+        }
+        var slide = new DoubleAnimation(target, TimeSpan.FromMilliseconds(300))
         {
             EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut },
-        });
+        };
+        slide.Completed += (_, _) =>
+        {
+            MainContent.ClearValue(WidthProperty);
+            MainContent.HorizontalAlignment = HorizontalAlignment.Stretch;
+        };
+        BeginAnimation(SidebarWidthProperty, slide);
+    }
+
+    // ---------------------------------------------------------------- library rows
+
+    private readonly BulkObservableCollection<LibraryRowGroup> _libraryRows = new();
+    private int _libraryPerRow = -1;
+
+    private void OnLibraryItemsChanged(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e) => RebuildLibraryRows(force: true);
+
+    /// <summary>Cuts the Library's tiles into rows that fit the page (or one per row in list view).</summary>
+    private void RebuildLibraryRows(bool force)
+    {
+        var width = LibraryList.ActualWidth - 24 - 20 - 14; // row margins and the scrollbar
+        var per = Vm.LibraryListMode ? 1 : Math.Max(1, (int)(width / 188)); // a tile is 184 + 4
+        if (!force && (per == _libraryPerRow || width <= 0)) return;
+        _libraryPerRow = per;
+        var items = Vm.LibraryItems;
+        var rows = new List<LibraryRowGroup>((items.Count + per - 1) / per);
+        for (var i = 0; i < items.Count; i += per)
+            rows.Add(new LibraryRowGroup(items.Skip(i).Take(per).ToList(), Vm.LibraryListMode));
+        _libraryRows.ReplaceAll(rows);
     }
     // ---------------------------------------------------------------- queue panel
 
@@ -841,7 +1001,7 @@ public partial class MainWindow : Window, IFrostSource
         // Let the slider update its value first.
         Dispatcher.BeginInvoke(() =>
         {
-            Vm.SeekTo(SeekBar.Value);
+            Vm.SeekTo(sender is Slider s ? s.Value : SeekBar.Value);
             Vm.IsSeeking = false;
         });
     }
@@ -852,11 +1012,120 @@ public partial class MainWindow : Window, IFrostSource
     {
         if (sender is not FrameworkElement { DataContext: LyricLine line }) return;
         _lyrics.Resync(); // jumping to a line follows the song again
+        _cinemaLyrics.Resync();
         Vm.SeekToLyric(line);
     }
     private void LyricWord_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is TextBlock { DataContext: LyricWord word } tb) tb.Foreground = LyricsAnimator.NewWordBrush(word);
+    }
+
+    // ---------------------------------------------------------------- cinema
+
+    /// <summary>
+    /// Cinema mode: the app's panels fade away and the now-playing view rises over the artwork backdrop
+    /// (fade + a slight zoom settling in); leaving does the reverse.
+    /// </summary>
+    private void UpdateCinema()
+    {
+        var on = Vm.IsCinema;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var d = new Duration(TimeSpan.FromMilliseconds(on ? 420 : 300));
+        if (Cinema.RenderTransform is not ScaleTransform { IsFrozen: false } zoom)
+            Cinema.RenderTransform = zoom = new ScaleTransform(1, 1);
+        Cinema.RenderTransformOrigin = new Point(0.5, 0.5);
+
+        if (on)
+        {
+            Cinema.Visibility = Visibility.Visible;
+            Cinema.IsHitTestVisible = true;
+            Root.IsHitTestVisible = false;
+            Cinema.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, d) { EasingFunction = ease });
+            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.04, 1, d) { EasingFunction = ease });
+            zoom.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.04, 1, d) { EasingFunction = ease });
+            var hide = new DoubleAnimation(0, d) { EasingFunction = ease };
+            hide.Completed += (_, _) => { if (Vm.IsCinema) Root.Visibility = Visibility.Hidden; };
+            Root.BeginAnimation(OpacityProperty, hide);
+        }
+        else
+        {
+            Root.Visibility = Visibility.Visible;
+            Root.IsHitTestVisible = true;
+            Cinema.IsHitTestVisible = false;
+            Root.BeginAnimation(OpacityProperty, new DoubleAnimation(1, d) { EasingFunction = ease });
+            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.03, d) { EasingFunction = ease });
+            zoom.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.03, d) { EasingFunction = ease });
+            var fade = new DoubleAnimation(0, d) { EasingFunction = ease };
+            fade.Completed += (_, _) => { if (!Vm.IsCinema) Cinema.Visibility = Visibility.Collapsed; };
+            Cinema.BeginAnimation(OpacityProperty, fade);
+        }
+    }
+
+    // ---------------------------------------------------------------- taskbar thumbnail buttons
+
+    private System.Windows.Shell.ThumbButtonInfo? _thumbPlay, _thumbMute;
+
+    /// <summary>
+    /// Like Spotify: hovering Yesify's taskbar icon shows Previous, Play / Pause, Next and Mute under the
+    /// window's preview.
+    /// </summary>
+    private void SetUpTaskbarButtons()
+    {
+        System.Windows.Shell.ThumbButtonInfo Button(char glyph, string tip, Action click)
+        {
+            var b = new System.Windows.Shell.ThumbButtonInfo { ImageSource = Yesify.Icon.ToImage(glyph, Brushes.White), Description = tip, DismissWhenClicked = false };
+            b.Click += (_, _) => click();
+            return b;
+        }
+        _thumbPlay = Button('\uE768', "Play", () => Vm.TogglePlayCommand.Execute(null));
+        _thumbMute = Button('\uE767', "Mute", () => Vm.ToggleMuteCommand.Execute(null));
+        TaskbarItemInfo = new System.Windows.Shell.TaskbarItemInfo
+        {
+            ThumbButtonInfos =
+            {
+                Button('\uE892', "Previous", () => Vm.PreviousCommand.Execute(null)),
+                _thumbPlay,
+                Button('\uE893', "Next", () => Vm.NextCommand.Execute(null)),
+                _thumbMute,
+            },
+        };
+        UpdateTaskbarButtons();
+    }
+
+    private void UpdateTaskbarButtons()
+    {
+        if (_thumbPlay == null || _thumbMute == null) return;
+        _thumbPlay.ImageSource = Yesify.Icon.ToImage(Vm.IsPlaying ? '\uE769' : '\uE768', Brushes.White);
+        _thumbPlay.Description = Vm.IsPlaying ? "Pause" : "Play";
+        _thumbMute.ImageSource = Yesify.Icon.ToImage(Vm.IsMuted ? '\uE74F' : '\uE767', Brushes.White);
+        _thumbMute.Description = Vm.IsMuted ? "Unmute" : "Mute";
+    }
+
+    // ---------------------------------------------------------------- warm songs under the pointer
+
+    private DispatcherTimer? _warmTimer;
+    private Track? _warmCandidate;
+
+    /// <summary>
+    /// Resting the pointer on a song for a moment starts finding its audio in the background (the slow
+    /// part of starting a song), so a click on it plays almost at once.
+    /// </summary>
+    private void TrackRow_MouseEnter(object sender, MouseEventArgs e)
+    {
+        if (sender is not FrameworkElement { DataContext: Track track }) return;
+        _warmCandidate = track;
+        _warmTimer ??= new DispatcherTimer(TimeSpan.FromMilliseconds(280), DispatcherPriority.Background, (_, _) =>
+        {
+            _warmTimer!.Stop();
+            Vm.WarmTrack(_warmCandidate);
+        }, Dispatcher);
+        _warmTimer.Stop();
+        _warmTimer.Start();
+    }
+
+    private void TrackRow_MouseLeave(object sender, MouseEventArgs e)
+    {
+        if (sender is FrameworkElement { DataContext: Track track } && ReferenceEquals(track, _warmCandidate)) _warmTimer?.Stop();
     }
 
     private void Status_Click(object sender, MouseButtonEventArgs e) => Vm.StatusText = "";

@@ -1,4 +1,4 @@
-<Application x:Class="Yesify.App"
+﻿<Application x:Class="Yesify.App"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:local="clr-namespace:Yesify"
@@ -37,6 +37,8 @@
                 <GradientStop Color="#FF26262C" Offset="1" />
             </LinearGradientBrush>
             <SolidColorBrush x:Key="PanelBorderBrush" Color="Transparent" />
+            <SolidColorBrush x:Key="GlassChipBrush" Color="#17FFFFFF" />
+            <SolidColorBrush x:Key="PlayerBarBrush" Color="#5906070C" />
             <LinearGradientBrush x:Key="MainPanelBrush" StartPoint="0,0" EndPoint="0,1">
                 <GradientStop Color="#FF26262C" Offset="0" />
                 <GradientStop Color="#FF141418" Offset="0.45" />
@@ -60,8 +62,17 @@
             <local:CountToVisibilityConverter x:Key="CountToVis" />
             <local:TabBackgroundConverter x:Key="TabBackground" />
 
+            <!-- A glyph string as a bold vector icon (see Icon.cs). -->
+            <DataTemplate x:Key="IconGlyph">
+                <local:Icon Glyph="{Binding}" />
+            </DataTemplate>
+            <local:GlyphTemplateSelector x:Key="IconGlyphSelector" Glyph="{StaticResource IconGlyph}" />
+            <local:EqualsConverter x:Key="Equals" />
+            <local:PresetBrushConverter x:Key="PresetBrush" />
+
             <!-- Flat icon / text button -->
             <Style x:Key="IconButton" TargetType="Button">
+                <Setter Property="ContentTemplateSelector" Value="{StaticResource IconGlyphSelector}" />
                 <Setter Property="Foreground" Value="{DynamicResource SubtleTextBrush}" />
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
@@ -116,14 +127,14 @@
             <!-- Picture-in-picture icon for "open miniplayer"; takes the button's color. -->
             <DataTemplate x:Key="MiniPlayerGlyph">
                 <Grid Width="16" Height="13">
-                    <Rectangle StrokeThickness="1.4" RadiusX="2" RadiusY="2"
+                    <Rectangle StrokeThickness="1.8" RadiusX="3" RadiusY="3"
                                Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                     <Rectangle Width="7" Height="5" RadiusX="1" RadiusY="1" HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,2.5,2.5"
                                Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                 </Grid>
             </DataTemplate>
 
-            <!-- On/off switch (CheckBox) -->
+            <!-- On/off switch (CheckBox): the knob slides across and the track fades to white; same size both ways. -->
             <Style x:Key="SwitchBox" TargetType="CheckBox">
                 <Setter Property="Foreground" Value="{DynamicResource SubtleTextBrush}" />
                 <Setter Property="Cursor" Value="Hand" />
@@ -137,18 +148,62 @@
                                     <ColumnDefinition Width="Auto" />
                                 </Grid.ColumnDefinitions>
                                 <ContentPresenter VerticalAlignment="Center" />
-                                <Border x:Name="Track" Grid.Column="1" Width="34" Height="18" CornerRadius="9" Background="#FF3A3A44" Margin="10,0,0,0">
-                                    <Ellipse x:Name="Knob" Width="12" Height="12" Fill="White" HorizontalAlignment="Left" Margin="3,0" />
+                                <Border x:Name="Track" Grid.Column="1" Width="40" Height="24" CornerRadius="12" Margin="10,0,0,0"
+                                        BorderThickness="1" BorderBrush="#33FFFFFF">
+                                    <Border.Background>
+                                        <SolidColorBrush Color="#33FFFFFF" />
+                                    </Border.Background>
+                                    <Ellipse x:Name="Knob" Width="18" Height="18" HorizontalAlignment="Left" Margin="2,0,0,0" RenderTransformOrigin="0.5,0.5">
+                                        <Ellipse.Fill>
+                                            <SolidColorBrush Color="#FFFFFFFF" />
+                                        </Ellipse.Fill>
+                                        <Ellipse.RenderTransform>
+                                            <TransformGroup>
+                                                <ScaleTransform />
+                                                <TranslateTransform />
+                                            </TransformGroup>
+                                        </Ellipse.RenderTransform>
+                                    </Ellipse>
                                 </Border>
                             </Grid>
                             <ControlTemplate.Triggers>
                                 <Trigger Property="IsChecked" Value="True">
-                                    <Setter TargetName="Track" Property="Background" Value="{DynamicResource AccentBrush}" />
-                                    <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
-                                    <Setter TargetName="Knob" Property="Fill" Value="{DynamicResource SwitchKnobOnBrush}" />
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.X)"
+                                                                 To="16" Duration="0:0:0.22">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseOut" />
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                                <ColorAnimation Storyboard.TargetName="Track" Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                                To="#F2FFFFFF" Duration="0:0:0.22" />
+                                                <ColorAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                To="#FF101016" Duration="0:0:0.22" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(UIElement.RenderTransform).(TransformGroup.Children)[1].(TranslateTransform.X)"
+                                                                 To="0" Duration="0:0:0.22">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseOut" />
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                                <ColorAnimation Storyboard.TargetName="Track" Storyboard.TargetProperty="(Border.Background).(SolidColorBrush.Color)"
+                                                                To="#33FFFFFF" Duration="0:0:0.22" />
+                                                <ColorAnimation Storyboard.TargetName="Knob" Storyboard.TargetProperty="(Shape.Fill).(SolidColorBrush.Color)"
+                                                                To="#FFFFFFFF" Duration="0:0:0.22" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.ExitActions>
                                 </Trigger>
                                 <Trigger Property="IsMouseOver" Value="True">
                                     <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter TargetName="Track" Property="BorderBrush" Value="#59FFFFFF" />
                                 </Trigger>
                             </ControlTemplate.Triggers>
                         </ControlTemplate>
@@ -162,8 +217,9 @@
                 <Setter Property="Foreground" Value="{DynamicResource PlayGlyphBrush}" />
                 <Setter Property="Background" Value="{DynamicResource PlayButtonBrush}" />
                 <Setter Property="BorderBrush" Value="{DynamicResource PlayButtonBorderBrush}" />
-                <Setter Property="Width" Value="40" />
-                <Setter Property="Height" Value="40" />
+                <Setter Property="FontSize" Value="17" />
+                <Setter Property="Width" Value="42" />
+                <Setter Property="Height" Value="42" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
@@ -208,6 +264,104 @@
                 <Setter Property="FontSize" Value="20" />
             </Style>
 
+            <!-- Liner-style glass chip: a rounded square of frosted white, for hero actions (shuffle, save, more). -->
+            <Style x:Key="GlassIconButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="Background" Value="{DynamicResource GlassChipBrush}" />
+                <Setter Property="Width" Value="44" />
+                <Setter Property="Height" Value="40" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
+                                    CornerRadius="10" RenderTransformOrigin="0.5,0.5">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                </Trigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="RenderTransform">
+                                        <Setter.Value>
+                                            <ScaleTransform ScaleX="0.94" ScaleY="0.94" />
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                                <Trigger Property="IsEnabled" Value="False">
+                                    <Setter Property="Opacity" Value="0.4" />
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Liner-style segmented bar item (player bar: lyrics, queue, cinema, mini). Tag=True marks it on. -->
+            <Style x:Key="BarButton" TargetType="Button" BasedOn="{StaticResource IconButton}">
+                <Setter Property="Width" Value="38" />
+                <Setter Property="Height" Value="32" />
+                <Setter Property="FontSize" Value="15" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="Transparent" CornerRadius="9" RenderTransformOrigin="0.5,0.5">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource RaisedBrush}" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                                    <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource SelectedBrush}" />
+                                </DataTrigger>
+                                <Trigger Property="IsPressed" Value="True">
+                                    <Setter TargetName="Bd" Property="RenderTransform">
+                                        <Setter.Value>
+                                            <ScaleTransform ScaleX="0.92" ScaleY="0.92" />
+                                        </Setter.Value>
+                                    </Setter>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
+            <!-- Filter chip (Library: All / Playlists / Albums). Tag=True is the selected one: light, dark text. -->
+            <Style x:Key="ChipButton" TargetType="Button">
+                <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
+                <Setter Property="Background" Value="{DynamicResource GlassChipBrush}" />
+                <Setter Property="FontSize" Value="13" />
+                <Setter Property="FontWeight" Value="SemiBold" />
+                <Setter Property="Height" Value="34" />
+                <Setter Property="Padding" Value="16,0" />
+                <Setter Property="Cursor" Value="Hand" />
+                <Setter Property="Focusable" Value="False" />
+                <Setter Property="Template">
+                    <Setter.Value>
+                        <ControlTemplate TargetType="Button">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}"
+                                    BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+                                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                            </Border>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsMouseOver" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="{DynamicResource HoverBrush}" />
+                                </Trigger>
+                                <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
+                                    <Setter TargetName="Bd" Property="Background" Value="#E6FFFFFF" />
+                                    <Setter Property="Foreground" Value="#FF0A0A0E" />
+                                </DataTrigger>
+                            </ControlTemplate.Triggers>
+                        </ControlTemplate>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- Pill text button -->
             <Style x:Key="PillButton" TargetType="Button">
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -219,7 +373,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="16" Padding="{TemplateBinding Padding}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
@@ -244,7 +398,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="16" Padding="{TemplateBinding Padding}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
@@ -275,7 +429,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10" Padding="{TemplateBinding Padding}">
                                 <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
@@ -291,17 +445,18 @@
 
             <!-- Window caption buttons -->
             <Style x:Key="CaptionButton" TargetType="Button">
+                <Setter Property="ContentTemplateSelector" Value="{StaticResource IconGlyphSelector}" />
                 <Setter Property="Foreground" Value="{DynamicResource SubtleTextBrush}" />
                 <Setter Property="Background" Value="Transparent" />
                 <Setter Property="FontFamily" Value="{StaticResource IconFont}" />
-                <Setter Property="FontSize" Value="10" />
-                <Setter Property="Width" Value="46" />
-                <Setter Property="Height" Value="36" />
+                <Setter Property="FontSize" Value="12" />
+                <Setter Property="Width" Value="38" />
+                <Setter Property="Height" Value="28" />
                 <Setter Property="Focusable" Value="False" />
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
@@ -318,7 +473,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="Button">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}">
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="8">
                                 <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
                             </Border>
                             <ControlTemplate.Triggers>
@@ -345,7 +500,7 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="TextBox">
-                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="20"
+                            <Border x:Name="Bd" Background="{TemplateBinding Background}" CornerRadius="10"
                                     BorderThickness="1" BorderBrush="Transparent">
                                 <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
                             </Border>
@@ -426,14 +581,17 @@
                                         <Thumb>
                                             <Thumb.Template>
                                                 <ControlTemplate TargetType="Thumb">
-                                                    <Border x:Name="T" CornerRadius="4" Margin="2" BorderThickness="1"
-                                                            Background="{DynamicResource ScrollThumbBrush}" BorderBrush="{DynamicResource ScrollThumbBorderBrush}" />
+                                                    <Border x:Name="T" CornerRadius="2" Margin="4,10" Background="{DynamicResource ScrollThumbBrush}" />
                                                     <ControlTemplate.Triggers>
                                                         <Trigger Property="IsMouseOver" Value="True">
                                                             <Setter TargetName="T" Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}" />
+                                                            <Setter TargetName="T" Property="Margin" Value="2.5,10" />
+                                                            <Setter TargetName="T" Property="CornerRadius" Value="3" />
                                                         </Trigger>
                                                         <Trigger Property="IsDragging" Value="True">
                                                             <Setter TargetName="T" Property="Background" Value="{DynamicResource ScrollThumbHoverBrush}" />
+                                                            <Setter TargetName="T" Property="Margin" Value="2.5,10" />
+                                                            <Setter TargetName="T" Property="CornerRadius" Value="3" />
                                                         </Trigger>
                                                     </ControlTemplate.Triggers>
                                                 </ControlTemplate>
@@ -472,6 +630,8 @@
             </Style>
 
             <!-- Menus: near-opaque dark (glass stays readable), with submenus ("Add to Playlist ▸"). -->
+            <!-- Menus open without Windows' own slide/fade; the menu below fades in by itself once it's laid out. -->
+            <PopupAnimation x:Key="{x:Static SystemParameters.MenuPopupAnimationKey}">None</PopupAnimation>
             <Style TargetType="ContextMenu">
                 <Setter Property="Background" Value="{DynamicResource MenuBrush}" />
                 <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
@@ -480,12 +640,44 @@
                 <Setter Property="Template">
                     <Setter.Value>
                         <ControlTemplate TargetType="ContextMenu">
-                            <Grid>
+                            <Grid x:Name="Root" Opacity="0" RenderTransformOrigin="0,0">
+                                <Grid.RenderTransform>
+                                    <ScaleTransform ScaleX="0.97" ScaleY="0.97" />
+                                </Grid.RenderTransform>
                                 <Border local:Frost.Enabled="True" CornerRadius="8" />
                                 <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="4">
                                     <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Cycle" />
                                 </Border>
                             </Grid>
+                            <ControlTemplate.Triggers>
+                                <Trigger Property="IsOpen" Value="True">
+                                    <Trigger.EnterActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <!-- starts a moment late: the items and the frost are in place by then, so nothing flickers -->
+                                                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" From="0" To="1" BeginTime="0:0:0.03" Duration="0:0:0.12" />
+                                                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)" From="0.97" To="1" BeginTime="0:0:0.03" Duration="0:0:0.16">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseOut" />
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)" From="0.97" To="1" BeginTime="0:0:0.03" Duration="0:0:0.16">
+                                                    <DoubleAnimation.EasingFunction>
+                                                        <CubicEase EasingMode="EaseOut" />
+                                                    </DoubleAnimation.EasingFunction>
+                                                </DoubleAnimation>
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.EnterActions>
+                                    <Trigger.ExitActions>
+                                        <BeginStoryboard>
+                                            <Storyboard>
+                                                <DoubleAnimation Storyboard.TargetName="Root" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0" />
+                                            </Storyboard>
+                                        </BeginStoryboard>
+                                    </Trigger.ExitActions>
+                                </Trigger>
+                            </ControlTemplate.Triggers>
                         </ControlTemplate>
                     </Setter.Value>
                 </Setter>
@@ -543,18 +735,18 @@
             <!-- Sidebar toggle icon: a window with a sidebar. Takes the button's colour. -->
             <DataTemplate x:Key="SidebarGlyph">
                 <Grid Width="17" Height="14">
-                    <Rectangle StrokeThickness="1.4" RadiusX="2.5" RadiusY="2.5" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
-                    <Rectangle Width="1.4" HorizontalAlignment="Left" Margin="5.5,1,0,1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    <Rectangle StrokeThickness="1.8" RadiusX="3" RadiusY="3" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
+                    <Rectangle Width="1.8" HorizontalAlignment="Left" Margin="5.5,1,0,1" Fill="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" />
                 </Grid>
             </DataTemplate>
 
             <!-- Sidebar entry; Tag=True marks the current view. -->
             <Style x:Key="SideNavButton" TargetType="Button" BasedOn="{StaticResource NavButton}">
                 <Style.Triggers>
-                    <Trigger Property="Tag" Value="True">
+                    <DataTrigger Binding="{Binding Tag, RelativeSource={RelativeSource Self}}" Value="True">
                         <Setter Property="Background" Value="{DynamicResource SelectedBrush}" />
                         <Setter Property="Foreground" Value="{StaticResource TextBrush}" />
-                    </Trigger>
+                    </DataTrigger>
                 </Style.Triggers>
             </Style>
 

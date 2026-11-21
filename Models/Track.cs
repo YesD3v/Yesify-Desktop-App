@@ -1,4 +1,4 @@
-using System.Text.Json.Serialization;
+﻿using System.Text.Json.Serialization;
 using CommunityToolkit.Mvvm.ComponentModel;
 
 namespace Yesify.Models;
@@ -27,6 +27,11 @@ public sealed partial class Track : ObservableObject
     [ObservableProperty]
     [property: JsonIgnore]
     private bool _isLiked;
+
+    /// <summary>On an album page: a song you haven't saved anywhere (shown grayed out).</summary>
+    [ObservableProperty]
+    [property: JsonIgnore]
+    private bool _isDimmed;
 
     // Row number in the list currently on screen.
     [ObservableProperty]
@@ -86,6 +91,11 @@ public sealed record QueueItem(Track Track, QueueSource Source, int Index);
 /// <summary>Placeholder item: the header at the top of the song list.</summary>
 public sealed class HeaderMarker;
 
+/// <summary>Library page (virtualized): the title and toolbar, a row of tiles (or one list row), the matching songs.</summary>
+public sealed class LibraryHeaderMarker;
+public sealed class LibrarySongsMarker;
+public sealed record LibraryRowGroup(IReadOnlyList<LibraryItem> Items, bool IsList);
+
 /// <summary>Placeholder item: the "More songs" divider on Search, above the results found beyond your library.</summary>
 public sealed class SearchMoreMarker;
 
@@ -95,9 +105,25 @@ public sealed class TopSectionsMarker;
 /// <summary>Placeholder item: rows of tiles under the songs (an artist's albums, search's albums and playlists).</summary>
 public sealed class SectionsMarker;
 
-public enum LibraryItemKind { Liked, UserPlaylist, Saved, NewPlaylist, Import }
+public enum LibraryItemKind { Liked, UserPlaylist, Saved, NewPlaylist, Import, Album }
 
 /// <summary>A tile in the Library grid.</summary>
-public sealed record LibraryItem(LibraryItemKind Kind, string Title, string Subtitle, string? Image, string? Id = null, PlaylistInfo? Saved = null);
+public sealed record LibraryItem(LibraryItemKind Kind, string Title, string Subtitle, string? Image, string? Id = null, PlaylistInfo? Saved = null, Track? AlbumTrack = null)
+{
+    /// <summary>For an album tile: your saved songs from it (shown if it can't be found online).</summary>
+    public IReadOnlyList<Track>? AlbumSongs { get; init; }
+
+    /// <summary>Pinned to the top of the Library.</summary>
+    public bool IsPinned { get; init; }
+
+    /// <summary>Stable identity for pins.</summary>
+    public string PinKey => Kind switch
+    {
+        LibraryItemKind.Liked => "liked",
+        LibraryItemKind.UserPlaylist => "user:" + Id,
+        LibraryItemKind.Saved => "saved:" + Id,
+        _ => Id ?? Title,
+    };
+}
 
 public enum RepeatMode { Off, All, One }

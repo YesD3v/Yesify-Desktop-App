@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using Yesify.Models;
 
 namespace Yesify.Services;
@@ -115,6 +115,10 @@ public sealed class LibraryService
         foreach (var t in liked.Concat(_playlists.SelectMany(p => p.Tracks)).Concat(_imported.Values.SelectMany(l => l)))
             if (seen.Add(t.Key)) yield return t;
     }
+
+    /// <summary>Every saved copy of every song (no de-duplication: copies can carry different album info).</summary>
+    public IEnumerable<Track> EveryTrack(IEnumerable<Track> liked) =>
+        liked.Concat(_playlists.SelectMany(p => p.Tracks)).Concat(_imported.Values.SelectMany(l => l));
 
     private void Save() => Storage.Save(PlaylistsFile, _playlists);
 

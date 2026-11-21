@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -49,7 +49,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         _timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(200) };
         _timer.Tick += (_, _) => Tick(); // started by SetUiVisible
 
-        Tracks.CollectionChanged += (_, _) => OnPropertyChanged(nameof(HasTracks));
+        Tracks.CollectionChanged += (_, _) => { OnPropertyChanged(nameof(HasTracks)); RefreshViewMeta(); };
         RefreshSidebar();
         RestoreSession();
         RefreshQueue(); // the queue panel may be open from last time: fill it with the restored session
@@ -59,7 +59,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     // ================================================================ bindable state
 
     public ObservableCollection<PlaylistInfo> Playlists { get; } = [];
-    public ObservableCollection<Track> Tracks { get; } = [];
+    public BulkObservableCollection<Track> Tracks { get; } = new();
     public bool HasTracks => Tracks.Count > 0 || SearchOnline.Count > 0;
     public bool HasPlaylists => Playlists.Count > 0;
     public ObservableCollection<LyricLine> Lyrics { get; } = [];
@@ -382,12 +382,25 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     [RelayCommand]
     private void OpenSettings()
     {
+        // A page of its own (sidebar: Settings), like Library.
+        Visit("settings", () => { OpenSettings(); return Task.CompletedTask; });
         CacheSizeText = $"{FormatSize(YouTubeService.CacheSize())} of {FormatSize(YouTubeService.MaxCacheBytes)}";
-        IsSettingsOpen = true;
+        _viewCts?.Cancel();
+        IsLoading = false;
+        CurrentCollection = null;
+        CurrentUserPlaylist = null;
+        ViewImageUrl = null;
+        CurrentView = ViewMode.Settings;
     }
 
     [RelayCommand]
-    private void CloseSettings() => IsSettingsOpen = false;
+    private void CloseSettings()
+    {
+        IsSettingsOpen = false;
+        if (CurrentView != ViewMode.Settings) return;
+        if (CanGoBack) GoBack();
+        else ShowHome();
+    }
 
     /// <summary>The cache sizes the Settings slider steps through, in MB.</summary>
     private static readonly long[] CacheSteps = [100, 250, 500, 1024, 2048, 5120, 10240, 20480, 51200];
@@ -514,6 +527,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     partial void OnVolumeChanged(double value)
     {
+        OnPropertyChanged(nameof(IsMuted));
         _player.Volume = (float)value;
         _settings.Volume = value;
     }
@@ -653,13 +667,12 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         ViewDescription = "";
         CurrentView = ViewMode.Collection;
         _viewIsLiked = false;
-        // Tearing down a big page (rows of tiles) takes a few dozen ms: let the loading skeleton paint
-        // first, so the click feels instant, and clear the old page behind it.
-        if (ViewSections.Count + ViewTopSections.Count > 0 || Tracks.Count > 60)
-        {
-            await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
-            if (cts.IsCancellationRequested) return;
-        }
+        ViewNotFound = false;
+        IsLoadingSongs = false;
+        // Always let the loading skeleton paint first (even for pages that are ready at once, like Liked
+        // Songs), so the click feels instant and the old page is torn down and the new one built behind it.
+        await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+        if (cts.IsCancellationRequested) return;
         Tracks.Clear();
         ResetViewExtras();
         try
@@ -674,9 +687,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             {
                 tracks[i].Number = i + 1;
                 tracks[i].IsLiked = _liked.Contains(tracks[i]);
-                Tracks.Add(tracks[i]);
+                tracks[i].IsDimmed = false;
             }
+            if (CurrentCollection is { Kind: CollectionKind.MusicAlbum or CollectionKind.Album } album) DimUnsaved(album, title, tracks);
+            // One update for the whole list instead of one per song (hundreds of layout passes).
+            Tracks.ReplaceAll(tracks);
             IsLoading = false;
+            if (tracks.Count > 0) _youtube.Warm(tracks[0]); // the likely first click
 
             await Task.WhenAll(_covers.FillAsync(tracks, cts.Token), more?.Invoke(cts.Token) ?? Task.CompletedTask);
             if (!cts.IsCancellationRequested) RememberImportedTracks();
@@ -1111,6 +1128,7 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             DurationSeconds = Math.Max(1, _player.Duration.TotalSeconds);
             DurationText = Track.Format(_player.Duration);
             StatusText = "";
+            _youtube.Warm(PeekNext()); // look the next song up now; it's downloaded a moment later
             _youtube.NowPlaying(track, PeekNext());
         }
         catch (OperationCanceledException) { }

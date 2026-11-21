@@ -131,3 +131,31 @@ public sealed class SidebarLabelOpacityConverter : IValueConverter
 
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
 }
+
+/// <summary>True when the value's text equals the parameter (e.g. which filter chip is selected).</summary>
+public sealed class EqualsConverter : IValueConverter
+{
+    public object Convert(object? value, Type t, object? p, CultureInfo c) => string.Equals(value?.ToString(), p?.ToString(), StringComparison.Ordinal);
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
+}
+
+/// <summary>"#top,#bottom" → a diagonal gradient swatch (Settings → Background presets).</summary>
+public sealed class PresetBrushConverter : IValueConverter
+{
+    public object Convert(object? value, Type t, object? p, CultureInfo c)
+    {
+        try
+        {
+            if (value is string s && s.Split(',') is [var a, var b])
+            {
+                var brush = new LinearGradientBrush((Color)ColorConverter.ConvertFromString(a), (Color)ColorConverter.ConvertFromString(b), 45);
+                brush.Freeze();
+                return brush;
+            }
+        }
+        catch { /* not a color */ }
+        return Brushes.Transparent;
+    }
+
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
+}

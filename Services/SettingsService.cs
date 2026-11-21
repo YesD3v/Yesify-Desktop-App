@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Text.Json;
 using Yesify.Models;
 
@@ -23,6 +23,16 @@ public sealed class Settings
     public double MiniHeight { get; set; } = 320;
     // Playlists / albums the user pinned to the sidebar from pasted links.
     public List<PlaylistInfo> SavedCollections { get; set; } = [];
+    // Library tiles pinned to the top, in pin order (LibraryItem.PinKey).
+    public List<string> PinnedLibrary { get; set; } = [];
+    // Background (Settings → Background): "album" (the cover, blurred and tinted) or "color" (custom gradient).
+    public string BackdropMode { get; set; } = "album";
+    public double BackdropTint { get; set; } = 50;       // 0–100: how strongly the cover's colors tint it
+    public double BackdropBrightness { get; set; } = 50; // 0–100: 50 is the default darkening
+    public string BackdropColor1 { get; set; } = "#3A2A8C";
+    public string BackdropColor2 { get; set; } = "#0E0B22";
+    public bool BackdropMotion { get; set; }
+    public double BackdropMotionFps { get; set; } = 30;
 }
 
 /// <summary>Small JSON files under %APPDATA%\Yesify, written atomically so a crash can't corrupt them.</summary>

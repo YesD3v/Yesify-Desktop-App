@@ -1,4 +1,4 @@
-using System.Collections.Concurrent;
+﻿using System.Collections.Concurrent;
 using System.IO;
 using System.Net.Http;
 using System.Text;
@@ -126,15 +126,72 @@ public sealed partial class YouTubeService
         }
     }
 
-    private async Task<string> DownloadAsync(string videoId)
+    // ---------------------------------------------------------------- stream lookup
+    //
+    // Measured: finding a video's audio stream (YoutubeExplode's manifest) takes 2.5-4 s, while downloading
+    // the song itself takes 0.3-0.5 s. So the lookup is what makes a song slow to start, and it's done ahead
+    // of time where possible: for the next songs as soon as one starts, and for a song the pointer rests on.
+    // Results are kept for a few hours (YouTube's stream links last about six).
+
+    private static readonly TimeSpan StreamLinkLife = TimeSpan.FromHours(4);
+    private readonly ConcurrentDictionary<string, (Task<IStreamInfo> Task, DateTime At)> _streams = new();
+    private readonly SemaphoreSlim _warmGate = new(2, 2);
+
+    /// <summary>The best audio stream of a video (AAC first, which Media Foundation decodes), looked up once.</summary>
+    private Task<IStreamInfo> StreamAsync(string videoId)
     {
-        using var timeout = new CancellationTokenSource(DownloadTimeout);
+        if (_streams.TryGetValue(videoId, out var hit) && DateTime.UtcNow - hit.At < StreamLinkLife && !hit.Task.IsFaulted && !hit.Task.IsCanceled)
+            return hit.Task;
+        var task = LookUpStreamAsync(videoId);
+        _streams[videoId] = (task, DateTime.UtcNow);
+        if (_streams.Count > 300)
+            foreach (var old in _streams.Where(kv => DateTime.UtcNow - kv.Value.At > StreamLinkLife).Select(kv => kv.Key).ToList())
+                _streams.TryRemove(old, out _);
+        return task;
+    }
+
+    private async Task<IStreamInfo> LookUpStreamAsync(string videoId)
+    {
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(45));
         var manifest = await _yt.Videos.Streams.GetManifestAsync(videoId, timeout.Token);
         var audio = manifest.GetAudioOnlyStreams().ToList();
         // Media Foundation decodes AAC (mp4) natively; Opus/WebM is only a fallback.
-        var stream = audio.Where(s => s.Container == Container.Mp4).OrderByDescending(s => s.Bitrate).FirstOrDefault()
-                     ?? audio.OrderByDescending(s => s.Bitrate).FirstOrDefault()
-                     ?? throw new InvalidOperationException("No audio stream available for this video.");
+        return audio.Where(s => s.Container == Container.Mp4).OrderByDescending(s => s.Bitrate).FirstOrDefault()
+               ?? audio.OrderByDescending(s => s.Bitrate).FirstOrDefault()
+               ?? throw new InvalidOperationException("No audio stream available for this video.");
+    }
+
+    /// <summary>
+    /// Gets a song ready to start fast, without downloading it: finds its video and looks up the audio
+    /// stream in the background (at most two at a time). Does nothing if it's downloaded already.
+    /// </summary>
+    public void Warm(Track? track)
+    {
+        if (track == null || (track.SpotifyId != null && string.IsNullOrWhiteSpace(track.Title))) return;
+        _ = Task.Run(async () =>
+        {
+            if (!await _warmGate.WaitAsync(0)) return; // busy: the pointer has moved on anyway
+            try
+            {
+                var id = await VideoIdAsync(track, CancellationToken.None);
+                if (Directory.EnumerateFiles(CacheDir, id + ".*").Any(f => !f.EndsWith(".part") && !f.EndsWith(".tmp"))) return;
+                await StreamAsync(id);
+            }
+            catch { /* best effort */ }
+            finally { _warmGate.Release(); }
+        });
+    }
+
+    private async Task<string> DownloadAsync(string videoId)
+    {
+        using var timeout = new CancellationTokenSource(DownloadTimeout);
+        IStreamInfo stream;
+        try { stream = await StreamAsync(videoId).WaitAsync(timeout.Token); }
+        catch (Exception e) when (e is not InvalidOperationException)
+        {
+            _streams.TryRemove(videoId, out _); // a stale or failed lookup: the retry looks it up afresh
+            throw;
+        }
 
         var path = Path.Combine(CacheDir, $"{videoId}.{(stream.Container == Container.Mp4 ? "m4a" : stream.Container.Name)}");
         var part = path + ".part";
@@ -144,7 +201,13 @@ public sealed partial class YouTubeService
         }
         catch (OperationCanceledException)
         {
+            _streams.TryRemove(videoId, out _);
             throw new TimeoutException("The download stalled.");
+        }
+        catch
+        {
+            _streams.TryRemove(videoId, out _); // e.g. an expired link (403): look it up again on the retry
+            throw;
         }
         Mp4Fixer.RemoveEditList(part);
         File.Move(part, path, overwrite: true);

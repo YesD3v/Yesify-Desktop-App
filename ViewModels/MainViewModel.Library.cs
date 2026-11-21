@@ -1,4 +1,4 @@
-using System.Collections.ObjectModel;
+﻿using System.Collections.ObjectModel;
 using System.Windows.Threading;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -7,7 +7,7 @@ using Yesify.Services;
 
 namespace Yesify.ViewModels;
 
-public enum ViewMode { Home, Library, Search, Collection }
+public enum ViewMode { Home, Library, Search, Collection, Settings }
 
 /// <summary>Library, search, and the user's own playlists.</summary>
 public sealed partial class MainViewModel
@@ -21,6 +21,7 @@ public sealed partial class MainViewModel
     [ObservableProperty] private string _viewDescription = "";
 
     public bool IsLibraryView => CurrentView == ViewMode.Library;
+    public bool IsSettingsView => CurrentView == ViewMode.Settings;
     public bool IsSearchView => CurrentView == ViewMode.Search;
     public bool IsTrackView => CurrentView is ViewMode.Search or ViewMode.Collection;
 
@@ -44,10 +45,11 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(ShowPageSkeleton));
         OnPropertyChanged(nameof(ShowTrackList));
         if (value != ViewMode.Search) StopOnlineSearch(clear: true);
-        if (value is ViewMode.Home or ViewMode.Library) ResetViewExtras();
+        if (value is ViewMode.Home or ViewMode.Library or ViewMode.Settings) ResetViewExtras();
         OnPropertyChanged(nameof(ShowSearchOnlineSection));
         OnPropertyChanged(nameof(IsHomeView));
         OnPropertyChanged(nameof(IsLibraryView));
+        OnPropertyChanged(nameof(IsSettingsView));
         OnPropertyChanged(nameof(IsSearchView));
         OnPropertyChanged(nameof(IsTrackView));
         OnPropertyChanged(nameof(HasHeaderMenu));
@@ -75,20 +77,58 @@ public sealed partial class MainViewModel
 
     // ================================================================ library
 
-    public ObservableCollection<LibraryItem> LibraryItems { get; } = [];
+    public BulkObservableCollection<LibraryItem> LibraryItems { get; } = new();
 
-    /// <summary>Liked Songs first, then your playlists, then imported ones, then the "new" and "import" tiles.</summary>
+    /// <summary>
+    /// Liked Songs first, then your playlists, then saved ones, narrowed by the filter chip (All / Playlists /
+    /// Albums) and the Library search field. "Create playlist" and "Import" are toolbar buttons, not tiles.
+    /// </summary>
     private void RefreshLibrary()
     {
-        LibraryItems.Clear();
-        LibraryItems.Add(new LibraryItem(LibraryItemKind.Liked, "Liked Songs", $"{_liked.Tracks.Count} songs", null));
-        foreach (var p in _library.Playlists)
-            LibraryItems.Add(new LibraryItem(LibraryItemKind.UserPlaylist, p.Name, PlaylistSubtitle(p), p.DisplayCover, p.Id));
+        var items = new List<LibraryItem>();
+        var q = (LibraryFilterQuery ?? "").Trim();
+        bool Match(string title, string sub) =>
+            q.Length == 0 || title.Contains(q, StringComparison.OrdinalIgnoreCase) || sub.Contains(q, StringComparison.OrdinalIgnoreCase);
+        var playlists = LibraryFilter is not "Albums";
+        var albums = LibraryFilter is not "Playlists";
+
+        if (playlists && Match("Liked Songs", ""))
+            items.Add(new LibraryItem(LibraryItemKind.Liked, "Liked Songs", $"{_liked.Tracks.Count} songs", null));
+        if (playlists)
+            foreach (var p in _library.Playlists)
+                if (PlaylistSubtitle(p) is var sub && Match(p.Name, sub))
+                    items.Add(new LibraryItem(LibraryItemKind.UserPlaylist, p.Name, sub, p.DisplayCover, p.Id));
         foreach (var s in _settings.SavedCollections)
-            LibraryItems.Add(new LibraryItem(LibraryItemKind.Saved, s.Name, s.Kind is CollectionKind.Album or CollectionKind.MusicAlbum ? $"Album · {s.Owner}" : s.Owner, s.ImageUrl, s.Id, s));
-        LibraryItems.Add(new LibraryItem(LibraryItemKind.NewPlaylist, "New Playlist", "", null));
-        LibraryItems.Add(new LibraryItem(LibraryItemKind.Import, "Import Playlist", "Spotify or YouTube link", null));
+        {
+            var isAlbum = s.Kind is CollectionKind.Album or CollectionKind.MusicAlbum;
+            if (isAlbum ? !albums : !playlists) continue;
+            var sub = isAlbum ? $"Album · {s.Owner}" : s.Owner;
+            if (Match(s.Name, sub)) items.Add(new LibraryItem(LibraryItemKind.Saved, s.Name, sub, s.ImageUrl, s.Id, s));
+        }
+        // Albums your saved songs come from (liked, your playlists, saved playlists), most-saved first.
+        if (albums)
+            foreach (var a in LibraryAlbums())
+                if (Match(a.Title, a.Subtitle)) items.Add(a);
+        RefreshLibrarySongs(q);
+        LibraryEmptyText = items.Count + LibrarySongs.Count > 0 ? "" : q.Length > 0 ? $"Nothing in your library matches “{q}”." : "Nothing here yet.";
+        // Pinned first (in the order they were pinned), then the rest. The page is virtualized (only the
+        // rows on screen exist), so hundreds of album tiles can go in at once.
+        var pins = _settings.PinnedLibrary;
+        var pinned = items.Where(i => pins.Contains(i.PinKey)).OrderBy(i => pins.IndexOf(i.PinKey)).Select(i => i with { IsPinned = true });
+        LibraryItems.ReplaceAll(pinned.Concat(items.Where(i => !pins.Contains(i.PinKey))).ToList());
     }
+
+    public bool IsPinned(LibraryItem item) => _settings.PinnedLibrary.Contains(item.PinKey);
+
+    /// <summary>Pins a Library tile to the top (or unpins it).</summary>
+    public void TogglePin(LibraryItem item)
+    {
+        if (!_settings.PinnedLibrary.Remove(item.PinKey)) _settings.PinnedLibrary.Add(item.PinKey);
+        SaveSettings();
+        RefreshLibrary();
+    }
+
+    [ObservableProperty] private string _libraryEmptyText = "";
 
     [RelayCommand]
     private void ShowLibrary()
@@ -113,6 +153,7 @@ public sealed partial class MainViewModel
             case LibraryItemKind.Saved when item.Saved != null: return OpenPlaylistAsync(item.Saved);
             case LibraryItemKind.NewPlaylist: BeginNewPlaylist(); break;
             case LibraryItemKind.Import: BeginImport(); break;
+            case LibraryItemKind.Album: return OpenLibraryAlbumAsync(item);
         }
         return Task.CompletedTask;
     }

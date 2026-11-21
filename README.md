@@ -1,3 +1,5 @@
+<p align="center"><img src="Assets/logo.png" width="120" alt="Yesify"></p>
+
 # Yesify
 
 A small, native Windows music player (C# / WPF, no WebView, no Electron).
@@ -6,8 +8,18 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
 
 ## Features
 
-- **Library**: Liked Songs, your own playlists and imported ones as a grid of covers. The sidebar
-  collapses to an icon strip.
+- **A bold glass look**: a vivid backdrop in the colors of the cover playing, rounded glass panels, a
+  floating player bar, thick icons and heavy type. Album and playlist stats (year, tracks, length) sit in
+  their own badges.
+- **Library**: Liked Songs, your own playlists, saved ones, and **every album your saved songs come from**,
+  as a grid or a list. Filter chips (All, Playlists, Albums), a search that also finds your songs,
+  **Create playlist** and **Import** buttons, and **pins** to keep favorites on top. On an album's page, the
+  songs you haven't saved are grayed out; an album that can't be found on YouTube Music shows the songs
+  you saved from it. The sidebar collapses to an icon strip.
+- **Cinema**: the whole window becomes the song, with a big cover, the title and controls, and huge
+  lyrics that fade into the background (Esc to leave).
+- **Background settings**: the album cover or your own colors (with presets), tint, brightness, and an
+  optional slow motion with a frame-rate cap (5 to 120 FPS).
 - **Import playlist**: paste a public Spotify playlist, album or track link, or a YouTube video or
   playlist link.
 - **Your own playlists** with a title, description, author and cover picture. Right-click any song to
@@ -21,8 +33,9 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
   to one of your playlists from its right-click menu.
 - **Start Radio** from any song, **Go to Artist / Go to Album** from any song (also by clicking the names
   in song lists and the player bar), and **Back** (title bar or the mouse's back button).
-- **Glass look**: frosted panels over a blurred, vivid version of the artwork. Pages that are loading show
-  glass placeholders with a shine sweeping across.
+- **Loading that feels instant**: every page shows glass placeholders with a shine sweeping across the
+  moment you click, and is built behind them, so opening a page never stutters. Long lists only build
+  the rows on screen.
 - **Queue**: a resizable side panel (shared with Lyrics) with Up next and Recently played. Drag songs
   to reorder. The queue is saved between sessions.
 - **Right-click anything**: songs, playlists, albums, mixes and artists (on Home, in the Library, in
@@ -41,9 +54,14 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
   lock screen, and anything that reads Windows media sessions can control playback.
 - **Discord Rich Presence** (on by default, in Settings): "Listening to Yesify" with the song, artist,
   album cover and progress.
+- **Taskbar buttons**: Previous, Play/Pause, Next and Mute under the window preview when you hover
+  Yesify in the taskbar.
 - Media keys, Space to play/pause, Ctrl+←/→ to skip.
 - Explicit songs play uncensored: YouTube Music marks explicit uploads, and Yesify picks the version
   that matches Spotify's.
+- **Fast starts**: finding a song's audio on YouTube (the slow part, 2.5 to 4 s) starts ahead of time,
+  for the next song as soon as one starts and for any song the pointer rests on, so clicks play almost
+  at once.
 - The next song is pre-downloaded, so skips are near-instant. Downloaded audio is kept up to a size you
   pick in Settings (100 MB to 50 GB); the songs you play most are kept longest.
 
@@ -79,7 +97,7 @@ Everything stays on your PC, in `%APPDATA%\Yesify`:
 
 | File | Contents |
 | --- | --- |
-| `settings.json` | Settings and the playlists/albums imported into your library |
+| `settings.json` | Settings (including the background and pinned tiles) and the playlists/albums imported into your library |
 | `liked.json` | Liked Songs |
 | `playlists.json` | Your own playlists (their pictures are in `covers\`) |
 | `session.json` | The song, position and queue to pick up where you left off |
@@ -106,6 +124,8 @@ in `%LOCALAPPDATA%\Yesify\cache`.
 | `MediaSession.cs` | Windows media session (SystemMediaTransportControls) through plain COM calls |
 | `LyricsAnimator.cs` | The Apple Music-style word sweep and the dots during instrumental breaks |
 | `Frost.cs` | Frosted-glass pop-ups (blurs a live picture of the window behind them) |
+| `Icon.cs` | The app's bold, rounded vector icons (and the taskbar button pictures) |
+| `AsyncImage.cs` | Cover loading off the UI thread, a disk cache, and a size-capped memory cache |
 | `ViewModels/MainViewModel*.cs` | Playback, queue, shuffle and repeat, library, playlists, settings |
 
 Note: streaming audio from YouTube outside YouTube's own apps goes against YouTube's Terms of Service.

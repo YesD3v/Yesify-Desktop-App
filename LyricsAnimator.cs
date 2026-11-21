@@ -1,4 +1,4 @@
-using System.Windows;
+﻿using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Input;
@@ -28,6 +28,7 @@ public sealed class LyricsAnimator
     private readonly MainViewModel _vm;
     private readonly ItemsControl _list;
     private readonly ScrollViewer _scroller;
+    private readonly double _anchor;
     private bool _perFrame;
     private int _active = -1;
 
@@ -40,9 +41,11 @@ public sealed class LyricsAnimator
     private DateTime _wheelUntil;
     private bool _scrollPending;
 
-    public LyricsAnimator(MainViewModel vm, ItemsControl list, ScrollViewer scroller)
+    /// <param name="anchor">Where the line being sung sits, as a fraction of the view's height.</param>
+    public LyricsAnimator(MainViewModel vm, ItemsControl list, ScrollViewer scroller, double anchor = 0.3)
     {
         _vm = vm;
+        _anchor = anchor;
         _list = list;
         _scroller = scroller;
         _vm.Lyrics.CollectionChanged += OnLyricsReplaced;
@@ -57,6 +60,9 @@ public sealed class LyricsAnimator
         _active = -1; // new song: containers are rebuilt
         _userScrolled = false;
         _resync.Stop();
+        // Paused (or not playing yet) there's no per-frame pass to pick the new lines up: render once they're built.
+        if (!_perFrame && _vm.Lyrics.Count > 0)
+            _list.Dispatcher.BeginInvoke(() => Render(_vm.AudioPosition, sweep: true), DispatcherPriority.Loaded);
     }
 
     /// <summary>
@@ -110,7 +116,8 @@ public sealed class LyricsAnimator
     /// <summary>Call whenever playback, visibility, theme or the active line may have changed.</summary>
     public void Refresh()
     {
-        var perFrame = _vm.ShowLyrics && _vm.IsPlaying && _list.IsVisible;
+        // Runs only while its own list is on screen (the side panel, or the cinema view).
+        var perFrame = _vm.IsPlaying && _list.IsVisible;
         if (perFrame != _perFrame)
         {
             if (perFrame) CompositionTarget.Rendering += OnFrame;
@@ -273,13 +280,13 @@ public sealed class LyricsAnimator
         return fresh;
     }
 
-    /// <summary>Glides so the active line sits about a third of the way down.</summary>
+    /// <summary>Glides so the active line sits at the anchor (about a third of the way down).</summary>
     private void ScrollTo(int idx, TimeSpan? duration = null, IEasingFunction? ease = null)
     {
         double target;
         if (idx < 0) target = 0;
         else if (Line(idx) is { IsVisible: true } el)
-            target = _scroller.VerticalOffset + el.TransformToAncestor(_scroller).Transform(new Point(0, 0)).Y - _scroller.ViewportHeight * 0.3;
+            target = _scroller.VerticalOffset + el.TransformToAncestor(_scroller).Transform(new Point(0, 0)).Y - _scroller.ViewportHeight * _anchor;
         else
         {
             // Lines not laid out yet (lyrics just arrived, or the panel just opened): scroll once they are.
@@ -299,13 +306,31 @@ public sealed class LyricsAnimator
             });
     }
 
+    private int _layoutTries;
+
     private void OnLayoutUpdated(object? sender, EventArgs e)
+    {
+        if (_userScrolled || _active < 0)
+        {
+            StopWaiting();
+            return;
+        }
+        if (Line(_active) is not { IsVisible: true })
+        {
+            // The rows for freshly loaded lyrics aren't built on the first pass: try the next ones.
+            if (++_layoutTries > 30) StopWaiting();
+            return;
+        }
+        StopWaiting();
+        SetLine(_active, active: true);
+        ScrollTo(_active);
+    }
+
+    private void StopWaiting()
     {
         _list.LayoutUpdated -= OnLayoutUpdated;
         _scrollPending = false;
-        if (_userScrolled || _active < 0 || Line(_active) is not { IsVisible: true }) return;
-        SetLine(_active, active: true);
-        ScrollTo(_active);
+        _layoutTries = 0;
     }
 
     private FrameworkElement? Line(int idx) =>

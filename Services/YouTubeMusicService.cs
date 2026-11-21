@@ -1,4 +1,4 @@
-using System.Net.Http;
+﻿using System.Net.Http;
 using System.Text;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
@@ -129,9 +129,22 @@ public sealed partial class YouTubeMusicService
     {
         var found = ListItems(await PostAsync("search", new JsonObject { ["query"] = $"{artist} {album}", ["params"] = AlbumsFilter }, ct))
             .Select(ToItem).OfType<HomeItem>().Where(i => i.Kind == HomeItemKind.MusicAlbum).ToList();
+        // Exact title first, then the same title without edition tags ("Graduation (Deluxe Edition)").
+        // Never "contains": "Yeezus 2" (unreleased) must not open "Yeezus". The artist has to match too.
         var want = Squash(album);
-        return found.FirstOrDefault(a => Squash(a.Title) == want)
-               ?? found.FirstOrDefault(a => want.Length > 0 && (Squash(a.Title).Contains(want) || want.Contains(Squash(a.Title))));
+        var wantBase = AlbumBase(album);
+        var who = Squash(artist);
+        bool ByArtist(HomeItem a) => who.Length == 0 || Squash(a.Subtitle ?? "").Contains(who) || Squash(a.Title).Contains(who);
+        return found.FirstOrDefault(a => Squash(a.Title) == want && ByArtist(a))
+               ?? found.FirstOrDefault(a => wantBase.Length > 0 && AlbumBase(a.Title) == wantBase && ByArtist(a));
+    }
+
+    /// <summary>An album title without edition tags: "(Deluxe Edition)", "[Explicit]", " - Remastered".</summary>
+    private static string AlbumBase(string title)
+    {
+        title = System.Text.RegularExpressions.Regex.Replace(title, @"\s*[\(\[][^\)\]]*[\)\]]", "");
+        var dash = title.IndexOf(" - ", StringComparison.Ordinal);
+        return Squash(dash > 0 ? title[..dash] : title);
     }
 
     // ================================================================ pages

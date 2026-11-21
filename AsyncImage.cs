@@ -1,4 +1,4 @@
-using System.IO;
+﻿using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
 using System.Text;
@@ -29,7 +29,15 @@ public static class AsyncImage
 
     private static readonly string DiskDir = Path.Combine(Storage.LocalDir, "covers");
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(20) };
-    private static readonly Dictionary<string, ImageSource> Cache = new();
+    /// <summary>
+    /// Decoded covers, least recently used dropped first once they pass <see cref="CacheBytes"/>. (It used
+    /// to keep up to 800 of any size, which could hold hundreds of MB of pictures nobody was looking at.)
+    /// Covers on screen stay alive through the elements showing them, whatever the cache drops.
+    /// </summary>
+    private static readonly Dictionary<string, (ImageSource Image, LinkedListNode<string> Node, long Bytes)> Cache = new();
+    private static readonly LinkedList<string> Recent = new();
+    private static long _cacheBytes;
+    private const long CacheBytes = 16L * 1024 * 1024;
     private static readonly Dictionary<string, Task<ImageSource?>> Loading = new();
     private static readonly Duration FadeIn = new(TimeSpan.FromMilliseconds(180));
     private static bool _diskReady;
@@ -51,20 +59,63 @@ public static class AsyncImage
     public static void SetWidth(DependencyObject d, int value) => d.SetValue(WidthProperty, value);
 
     /// <summary>Drops every decoded image (called when the window closes). The files on disk stay.</summary>
-    public static void ClearCache() => Cache.Clear();
+    public static void ClearCache()
+    {
+        Cache.Clear();
+        Recent.Clear();
+        _cacheBytes = 0;
+    }
+
+    private static bool TryGet(string key, out ImageSource image)
+    {
+        if (Cache.TryGetValue(key, out var hit))
+        {
+            Recent.Remove(hit.Node);
+            Recent.AddFirst(hit.Node);
+            image = hit.Image;
+            return true;
+        }
+        image = null!;
+        return false;
+    }
+
+    private static void Put(string key, ImageSource image)
+    {
+        if (Cache.ContainsKey(key)) return;
+        var bytes = image is BitmapSource b ? (long)b.PixelWidth * b.PixelHeight * 4 : 64 * 1024;
+        Cache[key] = (image, Recent.AddFirst(key), bytes);
+        _cacheBytes += bytes;
+        while (_cacheBytes > CacheBytes && Recent.Last is { } oldest)
+        {
+            _cacheBytes -= Cache[oldest.Value].Bytes;
+            Cache.Remove(oldest.Value);
+            Recent.RemoveLast();
+        }
+    }
+
+    /// <summary>
+    /// The <c>Width</c> given in XAML is for a 2× screen (twice the size shown). Decoding at the screen's
+    /// real scale instead means a quarter of the memory on a 100% display, with no visible difference.
+    /// </summary>
+    private static int DecodeWidth(DependencyObject d, int width)
+    {
+        var scale = d is Visual v ? VisualTreeHelper.GetDpi(v).DpiScaleX : 1.0;
+        return Math.Max(16, (int)Math.Ceiling(width / 2.0 * Math.Clamp(scale, 1, 2)));
+    }
 
     private static async void OnSourceChanged(DependencyObject d, DependencyPropertyChangedEventArgs e)
     {
         var url = d is Image ? GetUrl(d) : GetBackgroundUrl(d);
         var width = GetWidth(d);
+        var decode = DecodeWidth(d, width);
         if (string.IsNullOrEmpty(url))
         {
             Apply(d, null, fade: false);
             return;
         }
 
-        var key = $"{width}|{url}";
-        if (Cache.TryGetValue(key, out var hit))
+        var key = $"{decode}|{url}";
+        if (TryGet(key, out var hit))
         {
             Apply(d, hit, fade: false);
             return;
@@ -73,7 +124,7 @@ public static class AsyncImage
         Apply(d, null, fade: false); // don't show the previous cover while a recycled row loads the new one
         if (!Loading.TryGetValue(key, out var task))
         {
-            task = LoadAsync(url, width);
+            task = LoadAsync(url, decode);
             Loading[key] = task;
         }
         var image = await task;
@@ -82,11 +133,7 @@ public static class AsyncImage
         // background priority frames keep being drawn in between, so covers stream in smoothly.
         await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
         Loading.Remove(key);
-        if (image != null)
-        {
-            if (Cache.Count > 800) Cache.Clear();
-            Cache[key] = image;
-        }
+        if (image != null) Put(key, image);
         // Still wanted? (rows get recycled while scrolling)
         var now = d is Image ? GetUrl(d) : GetBackgroundUrl(d);
         if (now == url && GetWidth(d) == width) Apply(d, image, fade: true);
