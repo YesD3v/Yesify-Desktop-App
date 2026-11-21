@@ -69,6 +69,7 @@
             <local:GlyphTemplateSelector x:Key="IconGlyphSelector" Glyph="{StaticResource IconGlyph}" />
             <local:EqualsConverter x:Key="Equals" />
             <local:PresetBrushConverter x:Key="PresetBrush" />
+            <local:VolumeGlyphConverter x:Key="VolumeGlyph" />
 
             <!-- Flat icon / text button -->
             <Style x:Key="IconButton" TargetType="Button">

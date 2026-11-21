@@ -1,4 +1,4 @@
-using System.Globalization;
+﻿using System.Globalization;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -156,6 +156,15 @@ public sealed class PresetBrushConverter : IValueConverter
         catch { /* not a color */ }
         return Brushes.Transparent;
     }
+
+    public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
+}
+
+/// <summary>Volume → speaker icon: muted, one wave (low), two waves (loud).</summary>
+public sealed class VolumeGlyphConverter : IValueConverter
+{
+    public object Convert(object? value, Type t, object? p, CultureInfo c) =>
+        value is double v && v <= 0.001 ? "\uE74F" : value is double low && low < 0.5 ? "\uE993" : "\uE767";
 
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
 }

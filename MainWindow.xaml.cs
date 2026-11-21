@@ -137,6 +137,7 @@ public partial class MainWindow : Window, IFrostSource
             case nameof(MainViewModel.ShowLyrics):
                 _lyrics.Refresh();
                 _cinemaLyrics.Refresh();
+                if (e.PropertyName == nameof(MainViewModel.ShowLyrics) && Vm.ShowLyrics) EaseInPane();
                 if (e.PropertyName == nameof(MainViewModel.IsPlaying)) UpdateTaskbarButtons();
                 break;
             case nameof(MainViewModel.IsCinema):
@@ -152,6 +153,9 @@ public partial class MainWindow : Window, IFrostSource
                 UpdateRightPanel();
                 break;
             case nameof(MainViewModel.ShowQueue):
+                ScrollQueueToNowPlaying();
+                if (Vm.ShowQueue) EaseInPane();
+                break;
             case nameof(MainViewModel.CurrentTrack):
                 ScrollQueueToNowPlaying();
                 break;
@@ -384,18 +388,107 @@ public partial class MainWindow : Window, IFrostSource
 
     // ---------------------------------------------------------------- right panel
 
+    public static readonly DependencyProperty RightPanelOpenWidthProperty = DependencyProperty.Register(
+        nameof(RightPanelOpenWidth), typeof(double), typeof(MainWindow),
+        new PropertyMetadata(0.0, (d, e) => ((MainWindow)d).RightColumn.Width = new GridLength((double)e.NewValue)));
+
+    /// <summary>The right panel's column width while it slides (animated; copied into the column).</summary>
+    public double RightPanelOpenWidth
+    {
+        get => (double)GetValue(RightPanelOpenWidthProperty);
+        set => SetValue(RightPanelOpenWidthProperty, value);
+    }
+
+    private bool _rightSized;
+    private bool? _rightOpen;
+
+    /// <summary>
+    /// Opens or closes the lyrics / queue panel. It slides in from the right and fades in (or slides out and
+    /// fades away). Like the sidebar, the page keeps its final width while the edge moves, and the panel keeps
+    /// its own width, so neither is re-laid out on every frame.
+    /// </summary>
     private void UpdateRightPanel()
     {
-        if (Vm.IsRightPanelOpen)
+        var open = Vm.IsRightPanelOpen;
+        if (open == _rightOpen) return;
+        _rightOpen = open;
+        var width = Math.Clamp(Vm.RightPanelWidth, 260, 640);
+        BeginAnimation(RightPanelOpenWidthProperty, null);
+        if (!_rightSized || !IsLoaded)
         {
-            RightColumn.MinWidth = 260;
-            RightColumn.Width = new GridLength(Math.Clamp(Vm.RightPanelWidth, 260, 640));
+            // first layout: no animation
+            _rightSized = true;
+            RightPanel.Visibility = RightSplitter.Visibility = open ? Visibility.Visible : Visibility.Collapsed;
+            RightColumn.MinWidth = open ? 260 : 0;
+            RightPanelOpenWidth = open ? width : 0;
+            RightPanel.ClearValue(WidthProperty);
+            RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+            return;
         }
-        else
+
+        var ease = new CubicEase { EasingMode = EasingMode.EaseInOut };
+        var d = TimeSpan.FromMilliseconds(open ? 320 : 260);
+        var from = RightColumn.ActualWidth;
+        var to = open ? width : 0;
+        RightColumn.MinWidth = 0;
+        RightPanel.Width = width;
+        RightPanel.HorizontalAlignment = HorizontalAlignment.Left;
+        RightPanel.Visibility = Visibility.Visible;
+        RightSplitter.Visibility = Visibility.Visible;
+        if (MainPanel.ActualWidth > 0)
         {
-            RightColumn.MinWidth = 0;
-            RightColumn.Width = new GridLength(0);
+            MainContent.Width = Math.Max(0, MainPanel.ActualWidth - MainPanel.BorderThickness.Left - MainPanel.BorderThickness.Right - (to - from));
+            MainContent.HorizontalAlignment = HorizontalAlignment.Left;
         }
+        if (RightPanel.RenderTransform is not TranslateTransform { IsFrozen: false } slide)
+            RightPanel.RenderTransform = slide = new TranslateTransform();
+        if (open)
+        {
+            // Hidden until it's built (the queue can take a moment the first time), then the whole slide plays.
+            RightPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.Zero));
+            slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(36, TimeSpan.Zero));
+        }
+
+        var grow = new DoubleAnimation(from, to, d) { EasingFunction = ease };
+        grow.Completed += (_, _) =>
+        {
+            if (Vm.IsRightPanelOpen != open) return; // toggled again meanwhile
+            BeginAnimation(RightPanelOpenWidthProperty, null);
+            RightPanelOpenWidth = to;
+            RightColumn.MinWidth = open ? 260 : 0;
+            RightPanel.ClearValue(WidthProperty);
+            RightPanel.HorizontalAlignment = HorizontalAlignment.Stretch;
+            if (!open) RightPanel.Visibility = RightSplitter.Visibility = Visibility.Collapsed;
+            MainContent.ClearValue(WidthProperty);
+            MainContent.HorizontalAlignment = HorizontalAlignment.Stretch;
+        };
+        void Run()
+        {
+            if (Vm.IsRightPanelOpen != open) return;
+            slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(open ? 36 : 0, open ? 0 : 36, d) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut } });
+            RightPanel.BeginAnimation(OpacityProperty, new DoubleAnimation(open ? 0 : 1, open ? 1 : 0, d));
+            BeginAnimation(RightPanelOpenWidthProperty, grow);
+        }
+        // Loaded priority runs after the next layout and render: the panel is built by then.
+        if (open) Dispatcher.BeginInvoke(Run, DispatcherPriority.Loaded);
+        else Run();
+    }
+
+    /// <summary>Switching between Lyrics and Queue: the pane that appears fades and rises into place.</summary>
+    private void EaseInPane()
+    {
+        if (!Vm.IsRightPanelOpen || RightPanel.Visibility != Visibility.Visible) return;
+        FrameworkElement pane = Vm.ShowLyrics ? LyricsPane : QueueScroller;
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        if (pane.RenderTransform is not TranslateTransform { IsFrozen: false } rise)
+            pane.RenderTransform = rise = new TranslateTransform();
+        pane.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.Zero));
+        // after it's built, so the fade isn't spent while the queue lays itself out
+        Dispatcher.BeginInvoke(() =>
+        {
+            pane.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(240)));
+            rise.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(12, 0, TimeSpan.FromMilliseconds(320)) { EasingFunction = ease });
+        }, DispatcherPriority.Loaded);
     }
 
     private void RightSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) =>
