@@ -55,6 +55,16 @@ public static class AsyncImage
     public static void SetUrl(DependencyObject d, string? value) => d.SetValue(UrlProperty, value);
     public static string? GetBackgroundUrl(DependencyObject d) => (string?)d.GetValue(BackgroundUrlProperty);
     public static void SetBackgroundUrl(DependencyObject d, string? value) => d.SetValue(BackgroundUrlProperty, value);
+    /// <summary>
+    /// Keep showing the previous picture until the new one is ready, then swap it in place with no fade.
+    /// For the big cinema cover: blanking and fading in on every skip looked like a jump.
+    /// </summary>
+    public static readonly DependencyProperty SwapInPlaceProperty = DependencyProperty.RegisterAttached(
+        "SwapInPlace", typeof(bool), typeof(AsyncImage), new PropertyMetadata(false));
+
+    public static bool GetSwapInPlace(DependencyObject d) => (bool)d.GetValue(SwapInPlaceProperty);
+    public static void SetSwapInPlace(DependencyObject d, bool value) => d.SetValue(SwapInPlaceProperty, value);
+
     public static int GetWidth(DependencyObject d) => (int)d.GetValue(WidthProperty);
     public static void SetWidth(DependencyObject d, int value) => d.SetValue(WidthProperty, value);
 
@@ -121,7 +131,8 @@ public static class AsyncImage
             return;
         }
 
-        Apply(d, null, fade: false); // don't show the previous cover while a recycled row loads the new one
+        var swap = GetSwapInPlace(d);
+        if (!swap) Apply(d, null, fade: false); // don't show the previous cover while a recycled row loads the new one
         if (!Loading.TryGetValue(key, out var task))
         {
             task = LoadAsync(url, decode);
@@ -136,7 +147,7 @@ public static class AsyncImage
         if (image != null) Put(key, image);
         // Still wanted? (rows get recycled while scrolling)
         var now = d is Image ? GetUrl(d) : GetBackgroundUrl(d);
-        if (now == url && GetWidth(d) == width) Apply(d, image, fade: true);
+        if (now == url && GetWidth(d) == width && (image != null || !swap)) Apply(d, image, fade: !swap);
     }
 
     /// <param name="fade">Ease a cover in when it arrives late, instead of popping (glass mode only).</param>

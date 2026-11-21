@@ -45,7 +45,9 @@ public sealed partial class MainViewModel
         OnPropertyChanged(nameof(ShowPageSkeleton));
         OnPropertyChanged(nameof(ShowTrackList));
         if (value != ViewMode.Search) StopOnlineSearch(clear: true);
-        if (value is ViewMode.Home or ViewMode.Library or ViewMode.Settings) ResetViewExtras();
+        // The song page stays as it was behind Home, Library and Settings (the next page that opens resets
+        // it behind its skeleton): clearing it here rebuilt the hidden page and stalled every switch ~100 ms.
+        if (value is ViewMode.Home or ViewMode.Library or ViewMode.Settings) IsExploreView = false;
         OnPropertyChanged(nameof(ShowSearchOnlineSection));
         OnPropertyChanged(nameof(IsHomeView));
         OnPropertyChanged(nameof(IsLibraryView));
@@ -115,8 +117,16 @@ public sealed partial class MainViewModel
         // rows on screen exist), so hundreds of album tiles can go in at once.
         var pins = _settings.PinnedLibrary;
         var pinned = items.Where(i => pins.Contains(i.PinKey)).OrderBy(i => pins.IndexOf(i.PinKey)).Select(i => i with { IsPinned = true });
-        LibraryItems.ReplaceAll(pinned.Concat(items.Where(i => !pins.Contains(i.PinKey))).ToList());
+        var next = pinned.Concat(items.Where(i => !pins.Contains(i.PinKey))).ToList();
+        // Opening Library again with nothing changed keeps the tiles that are there: replacing them all
+        // rebuilt every row on screen (a ~100 ms hitch on each visit).
+        if (next.Count == LibraryItems.Count && next.Select(TileKey).SequenceEqual(LibraryItems.Select(TileKey))) return;
+        LibraryItems.ReplaceAll(next);
     }
+
+    /// <summary>Everything a Library tile shows (and what opening it uses), to tell whether it changed.</summary>
+    private static (LibraryItemKind, string, string, string, string?, bool, int, int) TileKey(LibraryItem i) =>
+        (i.Kind, i.PinKey, i.Title, i.Subtitle, i.Image, i.IsPinned, i.AlbumSongs?.Count ?? -1, i.AlbumSongs?.Count(t => !t.IsDimmed) ?? -1);
 
     public bool IsPinned(LibraryItem item) => _settings.PinnedLibrary.Contains(item.PinKey);
 
@@ -269,7 +279,9 @@ public sealed partial class MainViewModel
         _onlineCts?.Cancel();
         IsSearchingOnline = false;
         if (!clear) return;
-        SearchOnline.Clear();
+        // Only when there's something to clear: even an empty Clear() makes the song list (which shows
+        // these under the songs) rebuild every row, which stalled every page switch.
+        if (SearchOnline.Count > 0) SearchOnline.Clear();
         SearchOnlineStatus = "";
         OnPropertyChanged(nameof(HasTracks));
         OnPropertyChanged(nameof(ShowSearchOnlineSection));

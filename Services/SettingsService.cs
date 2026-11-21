@@ -14,6 +14,10 @@ public sealed class Settings
     public long CacheLimitMb { get; set; } = 100;
     // Show what's playing on Discord (Rich Presence).
     public bool DiscordRpc { get; set; } = true;
+    // What the Discord status shows. Without the song it's just "Listening to Yesify".
+    public bool DiscordShowSong { get; set; } = true;
+    public bool DiscordShowCover { get; set; } = true;
+    public bool DiscordShowProgress { get; set; } = true;
     public bool TrayHintShown { get; set; }
     public bool SidebarCollapsed { get; set; }
     // Miniplayer position and size, in device-independent pixels.

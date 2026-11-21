@@ -74,6 +74,18 @@ public sealed record LyricLine(TimeSpan? Time, string Text)
     public TimeSpan? End { get; set; }
     public IReadOnlyList<LyricWord> Words { get; set; } = [];
 
+    /// <summary>
+    /// A second voice (the part sung in parentheses, like a backing "(yeah)"): shown smaller under the
+    /// line, and lit by its own timing.
+    /// </summary>
+    public IReadOnlyList<LyricWord> BackgroundWords { get; init; } = [];
+
+    /// <summary>The second voice comes before the main words ("(Yeah) I'm on one"): it shows above the line.</summary>
+    public bool BackgroundFirst { get; init; }
+
+    public bool HasBackgroundAbove => BackgroundWords.Count > 0 && BackgroundFirst;
+    public bool HasBackgroundBelow => BackgroundWords.Count > 0 && !BackgroundFirst;
+
     /// <summary>Instrumental break: shown as three dots that fill up.</summary>
     public bool IsBreak { get; init; }
 
@@ -81,7 +93,7 @@ public sealed record LyricLine(TimeSpan? Time, string Text)
     public bool IsWordTimed { get; init; }
 }
 
-public sealed record LyricWord(string Text, TimeSpan Start, TimeSpan End);
+public sealed record LyricWord(string Text, TimeSpan Start, TimeSpan End, bool IsBackground = false);
 
 public enum QueueSource { Queued, Context, History }
 

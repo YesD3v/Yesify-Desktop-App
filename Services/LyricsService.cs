@@ -59,8 +59,20 @@ public sealed partial class LyricsService
     private static partial Regex TagLine();
 
     // a section or credit label ("Intro: Chance The Rapper", "(Verse 2: Jamie Foxx)", "Producers:..."),
-    [GeneratedRegex(@"^\s*\(?\s*(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude|skit|break|instrumental|sample|spoken|producers?|writers?|composers?|lyricists?|arrangers?|engineers?|vocals?|produced by|written by|composed by|arranged by|mixed by|mastered by|recorded by|lyrics by|music by|published by)\b[^:\uFF1A]{0,40}[:\uFF1A].*$", RegexOptions.IgnoreCase)]
+    [GeneratedRegex(@"^\s*\(?\s*(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude|skit|break|instrumental|samples?|interpolations?|spoken|producers?|writers?|composers?|lyricists?|arrangers?|engineers?|vocals?|produced by|written by|composed by|arranged by|mixed by|mastered by|recorded by|lyrics by|music by|published by)\b[^:\uFF1A]{0,40}[:\uFF1A].*$", RegexOptions.IgnoreCase)]
     private static partial Regex LabelLine();
+
+    // a bare section name, maybe with who sings it ("Verse 2 (Kanye West)", "Chorus"),
+    [GeneratedRegex(@"^\s*([(\uFF08].*[)\uFF09]\s*)?(intro|outro|verse|chorus|pre-?chorus|post-?chorus|hook|bridge|refrain|interlude)\s*\d*\s*(repeats?\s*\d*\s*x?\d*)?\s*([(\uFF08].*[)\uFF09])?\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex SectionLine();
+
+    // a sampled song credited on its own line ("Expensive Shit（2017）—K$upreme"),
+    [GeneratedRegex(@"^.{1,80}[(（]\d{4}[)）]\s*[—–-]\s*.{1,60}$")]
+    private static partial Regex SampleCredit();
+
+    // a production note in parentheses ("(M.I.A. Sample)", "(T.I. Adlibs)", "(Repeat 2x)"),
+    [GeneratedRegex(@"^\s*[(\uFF08](?=[^)\uFF09]*\b(samples?|adlibs?|ad-libs?|repeats?|\d+x|x\d+|instrumental|interpolations?|skit|spoken|intro|outro|verse|chorus|hook|bridge)\b)[^)\uFF09]*[)\uFF09]\s*$", RegexOptions.IgnoreCase)]
+    private static partial Regex NoteLine();
 
     // who sings next, in brackets ("(Kanye West (John Legend):)"),
     [GeneratedRegex(@"^\s*\(.*[:\uFF1A]\s*\)\s*$")]
@@ -88,7 +100,7 @@ public sealed partial class LyricsService
                 continue;
             }
             var text = WebUtility.HtmlDecode(line.Text);
-            if (TagLine().IsMatch(text) || LabelLine().IsMatch(text) || SpeakerLine().IsMatch(text)) continue;
+            if (TagLine().IsMatch(text) || LabelLine().IsMatch(text) || SpeakerLine().IsMatch(text) || SectionLine().IsMatch(text) || SampleCredit().IsMatch(text) || NoteLine().IsMatch(text)) continue;
 
             var tidy = Spaces().Replace(InlineTag().Replace(SpeakerPrefix().Replace(text, ""), "").Replace("()", ""), " ").Trim();
             if (tidy == line.Text)
@@ -100,6 +112,9 @@ public sealed partial class LyricsService
             result.Add(line with { Text = tidy, Words = CleanWords(line.Words) });
         }
 
+        for (var i = 0; i < result.Count; i++) result[i] = SplitBackground(result[i]);
+        AttachBackgroundLines(result);
+
         // Unsynced lyrics separate verses with blank lines; removing a header can leave two in a row.
         for (var i = result.Count - 1; i >= 0; i--)
         {
@@ -107,6 +122,70 @@ public sealed partial class LyricsService
             if (blank && (i == 0 || i == result.Count - 1 || result[i - 1] is { Time: null, Text.Length: 0 })) result.RemoveAt(i);
         }
         return result;
+    }
+
+    /// <summary>
+    /// Words sung in parentheses are a second voice (backing vocals, an ad-lib): they move to their own
+    /// smaller line under the main one, keeping their timing so they light up when they're sung. A line
+    /// that's all in parentheses stays as it is (there's no main voice to put it under).
+    /// </summary>
+    private static LyricLine SplitBackground(LyricLine line)
+    {
+        if (line.IsBreak || !line.Words.Any(w => w.Text.IndexOfAny(Opening) >= 0)) return line;
+        var main = new List<LyricWord>();
+        var background = new List<LyricWord>();
+        var depth = 0;
+        bool? startsInside = null; // whether the line starts with the second voice
+        foreach (var w in line.Words)
+        {
+            var opens = w.Text.Count(c => Opening.Contains(c));
+            var closes = w.Text.Count(c => Closing.Contains(c));
+            var inside = depth > 0 || opens > 0;
+            depth = Math.Max(0, depth + opens - closes);
+            var text = new string(w.Text.Where(c => !Opening.Contains(c) && !Closing.Contains(c)).ToArray());
+            if (text.Trim().Length == 0) continue;
+            startsInside ??= inside;
+            (inside ? background : main).Add(w with { Text = text, IsBackground = inside });
+        }
+        if (background.Count == 0) return line with { Words = main }; // only empty parentheses ("（）")
+        // All of it in parentheses: kept whole for now; AttachBackgroundLines puts it with a neighbor.
+        if (main.Count == 0) return line with { Words = [], BackgroundWords = background };
+        return line with { Words = main, BackgroundWords = background, BackgroundFirst = startsInside == true };
+    }
+
+    // NetEase writes full-width parentheses.
+    private static readonly char[] Opening = ['(', '（'];
+    private static readonly char[] Closing = [')', '）'];
+
+    /// <summary>
+    /// A line that's all second voice ("(Something like my Jesus piece)") goes under the line before it,
+    /// the echo it usually is; at the start of a verse (nothing sung just before) it goes above the line
+    /// after it. Only when both already have a second voice does it stay a line of its own (in the
+    /// second voice's softer style).
+    /// </summary>
+    private static void AttachBackgroundLines(List<LyricLine> lines)
+    {
+        static bool Sung(LyricLine? l) => l is { IsBreak: false, Words.Count: > 0 };
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var cur = lines[i];
+            if (cur.IsBreak || cur.Words.Count > 0 || cur.BackgroundWords.Count == 0) continue;
+            var prev = i > 0 ? lines[i - 1] : null;
+            var next = i + 1 < lines.Count ? lines[i + 1] : null;
+            if (Sung(prev) && prev!.BackgroundWords.Count == 0)
+            {
+                lines[i - 1] = prev with { BackgroundWords = cur.BackgroundWords, BackgroundFirst = false, End = Later(prev.End, cur.End) };
+                lines.RemoveAt(i--);
+            }
+            else if (Sung(next) && next!.BackgroundWords.Count == 0)
+            {
+                lines[i + 1] = next with { Time = cur.Time, BackgroundWords = cur.BackgroundWords, BackgroundFirst = true };
+                lines.RemoveAt(i--);
+            }
+            else lines[i] = cur with { Words = cur.BackgroundWords, BackgroundWords = [] };
+        }
+
+        static TimeSpan? Later(TimeSpan? a, TimeSpan? b) => a == null ? b : b == null ? a : a > b ? a : b;
     }
 
     /// <summary>The same tidying for a line's words, which keep their timing.</summary>
@@ -126,7 +205,7 @@ public sealed partial class LyricsService
             }
             var text = kept.ToString();
             if (result.Count == 0) text = SpeakerPrefix().Replace(text, "");
-            if (text.Trim().Trim('(', ')').Length == 0) continue; // only notes (or the brackets around them)
+            if (text.Trim().Length == 0 || text.Trim() == "()") continue; // only notes (lone parentheses stay: they mark a second voice)
             result.Add(w with { Text = text });
         }
         return result;
@@ -264,6 +343,7 @@ public sealed partial class LyricsService
             }
             var same = reference.FirstOrDefault(r => Math.Abs((r.Time!.Value - lineStart).TotalMilliseconds) < 1500);
             if (same != null) words = RestoreSpaces(words, same.Text);
+            words = CloseHeldPunctuation(words);
             var lineText = string.Concat(words.Select(w => w.Text)).Trim();
             if (lineText.Length == 0 || CreditLine().IsMatch(lineText)) continue;
             timed.Add((lineStart, lineEnd, lineText, words));
@@ -282,6 +362,29 @@ public sealed partial class LyricsService
                 lines.Add(new LyricLine(end + TimeSpan.FromMilliseconds(500), "") { IsBreak = true, End = timed[i + 1].Start });
         }
         return lines;
+    }
+
+    /// <summary>
+    /// The word data sometimes holds a punctuation mark for seconds ("All day" + "," for 4.4 s + "n!gga"),
+    /// which pushed the rest of the line late and kept the light waiting on a comma. Punctuation isn't
+    /// sung: it gets no time, and the words after it in the line move back by what it held.
+    /// </summary>
+    private static List<LyricWord> CloseHeldPunctuation(List<LyricWord> words)
+    {
+        var shift = TimeSpan.Zero;
+        var result = new List<LyricWord>(words.Count);
+        foreach (var w in words)
+        {
+            var moved = shift > TimeSpan.Zero ? w with { Start = w.Start - shift, End = w.End - shift } : w;
+            var held = moved.End - moved.Start;
+            if (!moved.Text.Any(char.IsLetterOrDigit) && held > TimeSpan.FromMilliseconds(300))
+            {
+                shift += held;
+                moved = moved with { End = moved.Start };
+            }
+            result.Add(moved);
+        }
+        return result;
     }
 
     /// <summary>

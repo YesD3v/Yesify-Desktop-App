@@ -124,11 +124,19 @@ public sealed class AudioPlayer : IDisposable
     // Perceptual volume curve so the slider feels linear.
     private static float Curve(float v) => v * v;
 
-    public void Play(string path)
+    /// <summary>
+    /// Opens a file for <see cref="Play"/> on a background thread: Media Foundation takes up to ~160 ms to
+    /// open one (the first is slowest), which used to freeze the window on every skip.
+    /// </summary>
+    public static Task<PreciseSeekReader> OpenAsync(string path) =>
+        // Media Foundation decodes; PreciseSeekReader makes seeking exact (see there).
+        Task.Run(() => new PreciseSeekReader(() => new MediaFoundationReader(path)));
+
+    /// <summary>Plays a file opened with <see cref="OpenAsync"/>; the player owns it from here.</summary>
+    public void Play(PreciseSeekReader opened)
     {
         Stop();
-        // Media Foundation decodes; PreciseSeekReader makes seeking exact (see there).
-        _reader = new PreciseSeekReader(() => new MediaFoundationReader(path));
+        _reader = opened;
         _volumeProvider = new VolumeSampleProvider(_reader.ToSampleProvider()) { Volume = Curve(_volume) };
         var reader = _reader;
         _counter = new OutputCounter(_volumeProvider, () => reader.CurrentTime);
@@ -170,6 +178,31 @@ public sealed class AudioPlayer : IDisposable
         _reader = null;
         _volumeProvider = null;
         _counter = null;
+        if (output != null) output.PlaybackStopped -= OnPlaybackStopped;
+        if (output == null && reader == null) return;
+        // Stopping the device waits for its playback thread, and the decoder can only go once it's stopped:
+        // done off the UI thread so skipping a song never stalls the window.
+        Task.Run(() =>
+        {
+            try
+            {
+                output?.Stop();
+                output?.Dispose();
+            }
+            catch { /* the device is going away anyway */ }
+            reader?.Dispose();
+        });
+    }
+
+    /// <summary>On exit: stop right away, so nothing keeps playing while the app closes.</summary>
+    public void Dispose()
+    {
+        var output = _output;
+        var reader = _reader;
+        _output = null;
+        _reader = null;
+        _volumeProvider = null;
+        _counter = null;
         if (output != null)
         {
             output.PlaybackStopped -= OnPlaybackStopped;
@@ -178,6 +211,4 @@ public sealed class AudioPlayer : IDisposable
         }
         reader?.Dispose();
     }
-
-    public void Dispose() => Stop();
 }

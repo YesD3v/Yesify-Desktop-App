@@ -373,8 +373,8 @@
         <!-- ============================================================ glass backdrop
              Artwork decoded tiny and stretched (reads as a blur), tinted with its own vivid colors. -->
         <Grid x:Name="Backdrop" IsHitTestVisible="False" ClipToBounds="True" >
-            <!-- The blurred artwork is kept as a half-size bitmap: without the cache, the two full-window blurs
-                 are recomputed on every frame that anything above them changes (lyrics, the seek bar). -->
+            <!-- The artwork comes pre-blurred (CoverColors: a tiny blurred bitmap, smooth when stretched), so there's
+                 no live blur effect to redraw; the cache keeps the slow motion (turn, drift) cheap. -->
             <Grid x:Name="BackImages" RenderTransformOrigin="0.5,0.5">
                 <Grid.RenderTransform>
                     <TransformGroup>
@@ -386,16 +386,8 @@
                 <Grid.CacheMode>
                     <BitmapCache RenderAtScale="0.5" EnableClearType="False" />
                 </Grid.CacheMode>
-                <Image x:Name="BackA" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
-                    <Image.Effect>
-                        <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
-                    </Image.Effect>
-                </Image>
-                <Image x:Name="BackB" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality">
-                    <Image.Effect>
-                        <BlurEffect Radius="60" RenderingBias="Performance" KernelType="Gaussian" />
-                    </Image.Effect>
-                </Image>
+                <Image x:Name="BackA" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality" />
+                <Image x:Name="BackB" Stretch="UniformToFill" Margin="-60" Opacity="0" RenderOptions.BitmapScalingMode="HighQuality" />
             </Grid>
             <Rectangle x:Name="TintLayer" Opacity="0.5">
                 <Rectangle.Fill>
@@ -790,9 +782,72 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
                                         <TextBlock Text="Discord status" FontSize="14" FontWeight="Bold" />
-                                        <TextBlock Text="Your Discord status shows the song, the artist, the album cover and how far into the song you are. It clears while paused." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                        <TextBlock Text="Shows what you&#x2019;re listening to on your Discord profile. It clears while paused." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
                                     </StackPanel>
                                     <CheckBox Grid.Column="1" Style="{StaticResource SwitchBox}" IsChecked="{Binding ShowOnDiscord}" VerticalAlignment="Center" />
+                                </Grid>
+                                <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="20,0" />
+                                <Grid Margin="20,14" IsEnabled="{Binding ShowOnDiscord}">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Opacity" Value="0.45" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
+                                        <TextBlock Text="Show the song" FontSize="14" FontWeight="Bold" />
+                                        <TextBlock Text="The title and artist. Off, your status just says Listening to Yesify." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <CheckBox Grid.Column="1" Style="{StaticResource SwitchBox}" IsChecked="{Binding DiscordShowSong}" VerticalAlignment="Center" />
+                                </Grid>
+                                <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="20,0" />
+                                <Grid Margin="20,14" IsEnabled="{Binding ShowOnDiscord}">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Opacity" Value="0.45" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
+                                        <TextBlock Text="Show the album cover" FontSize="14" FontWeight="Bold" />
+                                        <TextBlock Text="The cover, with Yesify&#x2019;s icon in its corner. Off (or with the song hidden), Yesify&#x2019;s icon." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <CheckBox Grid.Column="1" Style="{StaticResource SwitchBox}" IsChecked="{Binding DiscordShowCover}" VerticalAlignment="Center" />
+                                </Grid>
+                                <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="20,0" />
+                                <Grid Margin="20,14" IsEnabled="{Binding ShowOnDiscord}">
+                                    <Grid.Style>
+                                        <Style TargetType="Grid">
+                                            <Style.Triggers>
+                                                <Trigger Property="IsEnabled" Value="False">
+                                                    <Setter Property="Opacity" Value="0.45" />
+                                                </Trigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </Grid.Style>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
+                                        <TextBlock Text="Show the progress" FontSize="14" FontWeight="Bold" />
+                                        <TextBlock Text="How far into the song you are, as a bar with the time." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <CheckBox Grid.Column="1" Style="{StaticResource SwitchBox}" IsChecked="{Binding DiscordShowProgress}" VerticalAlignment="Center" />
                                 </Grid>
                                 </StackPanel>
                             </Border>
@@ -1278,12 +1333,12 @@
                                     </Border>
                                     <!-- a Grid cell (not a horizontal StackPanel) so long titles end in "…" instead of running under the next column -->
                                     <StackPanel Grid.Column="2" Margin="12,0,16,0" VerticalAlignment="Center">
-                                        <TextBlock x:Name="Title" Text="{Binding Title}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                        <!-- left-aligned, so the mark sits right after the title (and the title trims before it) -->
+                                        <DockPanel HorizontalAlignment="Left">
+                                            <Path x:Name="Explicit" DockPanel.Dock="Right" Visibility="Collapsed" Style="{StaticResource ExplicitMark}" Margin="6,0,0,0" />
+                                            <TextBlock x:Name="Title" Text="{Binding Title}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis" />
+                                        </DockPanel>
                                         <DockPanel Margin="0,2,0,0">
-                                            <Border x:Name="Explicit" DockPanel.Dock="Left" Visibility="Collapsed" Width="14" Height="14" CornerRadius="2.5" Margin="0,0,6,0"
-                                                    Background="{DynamicResource InactiveIconBrush}" VerticalAlignment="Center" ToolTip="Explicit">
-                                                <TextBlock Text="E" FontSize="9" FontWeight="Bold" Foreground="#FF101016" HorizontalAlignment="Center" VerticalAlignment="Center" />
-                                            </Border>
                                             <TextBlock Text="{Binding Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis"
                                                        Style="{StaticResource LinkText}" HorizontalAlignment="Left" MouseLeftButtonUp="ArtistLink_Click" ToolTip="Go to artist" />
                                         </DockPanel>
@@ -1358,19 +1413,47 @@
                                                 <Grid.RenderTransform>
                                                     <ScaleTransform ScaleX="0.96" ScaleY="0.96" />
                                                 </Grid.RenderTransform>
-                                                <ItemsControl ItemsSource="{Binding Words}" Focusable="False"
-                                                              Visibility="{Binding IsBreak, Converter={StaticResource InvBoolToVis}}">
-                                                    <ItemsControl.ItemsPanel>
-                                                        <ItemsPanelTemplate>
-                                                            <WrapPanel />
-                                                        </ItemsPanelTemplate>
-                                                    </ItemsControl.ItemsPanel>
-                                                    <ItemsControl.ItemTemplate>
-                                                        <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                            <TextBlock Text="{Binding Text}" FontSize="27" FontWeight="ExtraBold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
-                                                        </DataTemplate>
-                                                    </ItemsControl.ItemTemplate>
-                                                </ItemsControl>
+                                                <StackPanel Visibility="{Binding IsBreak, Converter={StaticResource InvBoolToVis}}">
+                                                    <ItemsControl ItemsSource="{Binding BackgroundWords}" Focusable="False" Margin="0,0,0,3"
+                                                                  Visibility="{Binding HasBackgroundAbove, Converter={StaticResource BoolToVis}}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel />
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                                <TextBlock Text="{Binding Text}" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                    <ItemsControl ItemsSource="{Binding Words}" Focusable="False">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel />
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                                <TextBlock Text="{Binding Text}" FontSize="27" FontWeight="ExtraBold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                    <!-- second voice (sung in parentheses): smaller, lit by its own timing; under the line, or above it when it comes first -->
+                                                    <ItemsControl ItemsSource="{Binding BackgroundWords}" Focusable="False" Margin="0,3,0,0"
+                                                                  Visibility="{Binding HasBackgroundBelow, Converter={StaticResource BoolToVis}}">
+                                                        <ItemsControl.ItemsPanel>
+                                                            <ItemsPanelTemplate>
+                                                                <WrapPanel />
+                                                            </ItemsPanelTemplate>
+                                                        </ItemsControl.ItemsPanel>
+                                                        <ItemsControl.ItemTemplate>
+                                                            <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                                <TextBlock Text="{Binding Text}" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                            </DataTemplate>
+                                                        </ItemsControl.ItemTemplate>
+                                                    </ItemsControl>
+                                                </StackPanel>
                                                 <StackPanel Orientation="Horizontal" Height="40" RenderTransformOrigin="0,0.5"
                                                             Visibility="{Binding IsBreak, Converter={StaticResource BoolToVis}}">
                                                     <StackPanel.RenderTransform>
@@ -1460,8 +1543,12 @@
                         </Grid>
                     </Border>
                     <StackPanel Margin="14,0,0,0" VerticalAlignment="Center" MaxWidth="260">
-                        <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis" HorizontalAlignment="Left"
-                                   Style="{StaticResource LinkText}" MouseLeftButtonUp="AlbumLink_Click" ToolTip="Go to album" />
+                        <DockPanel HorizontalAlignment="Left">
+                            <Path DockPanel.Dock="Right" Style="{StaticResource ExplicitMark}" Margin="6,0,0,0"
+                                  Visibility="{Binding CurrentTrack.IsExplicit, Converter={StaticResource ExplicitVis}, FallbackValue=Collapsed}" />
+                            <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="14" FontWeight="Bold" TextTrimming="CharacterEllipsis"
+                                       Style="{StaticResource LinkText}" MouseLeftButtonUp="AlbumLink_Click" ToolTip="Go to album" />
+                        </DockPanel>
                         <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="12" Foreground="{DynamicResource SubtleTextBrush}" TextTrimming="CharacterEllipsis" Margin="0,3,0,0"
                                    HorizontalAlignment="Left" Style="{StaticResource LinkText}" MouseLeftButtonUp="ArtistLink_Click" ToolTip="Go to artist" />
                     </StackPanel>
@@ -1481,7 +1568,7 @@
                                  "Forever" animations even on hidden elements, which costs CPU for nothing. -->
                             <!-- Loading: a comet of light sweeping round the play button, gently breathing.
                                  Only animates while a song is loading (Forever animations on hidden elements still cost CPU). -->
-                            <Ellipse Width="50" Height="50" Style="{StaticResource LoadingRing}">
+                            <Ellipse Width="50" Height="50" Margin="-4" Style="{StaticResource LoadingRing}"> <!-- the margin keeps it out of layout: appearing never moves the buttons -->
                                 <Ellipse.RenderTransform>
                                     <TransformGroup>
                                         <RotateTransform />
@@ -1614,12 +1701,21 @@
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="60" ShadowDepth="14" Opacity="0.55" />
                             </Border.Effect>
-                            <Border CornerRadius="18" local:AsyncImage.BackgroundUrl="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="840" />
+                            <Border CornerRadius="18" local:AsyncImage.SwapInPlace="True" local:AsyncImage.BackgroundUrl="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="840" />
                         </Border>
                         <Grid Margin="0,26,0,0">
                             <StackPanel Margin="0,0,48,0">
-                                <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="26" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" TextTrimming="CharacterEllipsis"
-                                           ToolTip="{Binding CurrentTrack.Title}" />
+                                <DockPanel HorizontalAlignment="Left">
+                                    <!-- explicit mark, scaled to the big title -->
+                                    <Path DockPanel.Dock="Right" Style="{StaticResource ExplicitMark}" Margin="9,2,0,0"
+                                          Visibility="{Binding CurrentTrack.IsExplicit, Converter={StaticResource ExplicitVis}, FallbackValue=Collapsed}">
+                                        <Path.LayoutTransform>
+                                            <ScaleTransform ScaleX="1.45" ScaleY="1.45" />
+                                        </Path.LayoutTransform>
+                                    </Path>
+                                    <TextBlock Text="{Binding CurrentTrack.Title}" FontSize="26" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" TextTrimming="CharacterEllipsis"
+                                               ToolTip="{Binding CurrentTrack.Title}" />
+                                </DockPanel>
                                 <TextBlock Text="{Binding CurrentTrack.Artist}" FontSize="17" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                             </StackPanel>
                             <Button HorizontalAlignment="Right" VerticalAlignment="Center" DataContext="{Binding CurrentTrack}"
@@ -1653,7 +1749,7 @@
                             <Grid Margin="18,0">
                                 <Button Style="{StaticResource PlayButton}" Content="{Binding IsPlaying, Converter={StaticResource PlayGlyph}}" Width="64" Height="64" FontSize="24"
                                         Command="{Binding TogglePlayCommand}" ToolTip="Play / Pause" />
-                                <Ellipse Width="74" Height="74" StrokeThickness="3.5" Style="{StaticResource LoadingRing}">
+                                <Ellipse Width="74" Height="74" Margin="-5" StrokeThickness="3.5" Style="{StaticResource LoadingRing}"> <!-- the margin keeps it out of layout: appearing used to grow the column and make it jump -->
                                     <Ellipse.RenderTransform>
                                         <TransformGroup>
                                             <RotateTransform />
@@ -1673,15 +1769,8 @@
                 <!-- the lyrics: big, left-aligned, fading out toward the top and bottom edges -->
                 <Grid Grid.Column="1">
                     <TextBlock Text="{Binding LyricsStatus}" FontSize="22" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
-                    <ScrollViewer x:Name="CinemaLyricsScroller" VerticalScrollBarVisibility="Hidden">
-                        <ScrollViewer.OpacityMask>
-                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
-                                <GradientStop Color="#00000000" Offset="0" />
-                                <GradientStop Color="#FF000000" Offset="0.07" />
-                                <GradientStop Color="#FF000000" Offset="0.86" />
-                                <GradientStop Color="#00000000" Offset="1" />
-                            </LinearGradientBrush>
-                        </ScrollViewer.OpacityMask>
+                    <!-- edge fade: set by MainWindow (FadeCinemaLyricsEdges), sized to what's visible, not to all the lyrics -->
+                    <ScrollViewer x:Name="CinemaLyricsScroller" VerticalScrollBarVisibility="Hidden" SizeChanged="CinemaLyricsScroller_SizeChanged">
                         <ItemsControl x:Name="CinemaLyricsList" ItemsSource="{Binding Lyrics}" Margin="0,320,24,420"
                                       TextOptions.TextFormattingMode="Ideal" TextOptions.TextHintingMode="Animated" TextOptions.TextRenderingMode="Grayscale">
                             <ItemsControl.ItemTemplate>
@@ -1690,19 +1779,47 @@
                                         <Grid.RenderTransform>
                                             <ScaleTransform ScaleX="0.96" ScaleY="0.96" />
                                         </Grid.RenderTransform>
-                                        <ItemsControl ItemsSource="{Binding Words}" Focusable="False"
-                                                      Visibility="{Binding IsBreak, Converter={StaticResource InvBoolToVis}}">
-                                            <ItemsControl.ItemsPanel>
-                                                <ItemsPanelTemplate>
-                                                    <WrapPanel />
-                                                </ItemsPanelTemplate>
-                                            </ItemsControl.ItemsPanel>
-                                            <ItemsControl.ItemTemplate>
-                                                <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                    <TextBlock Text="{Binding Text}" FontSize="40" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
-                                                </DataTemplate>
-                                            </ItemsControl.ItemTemplate>
-                                        </ItemsControl>
+                                        <StackPanel Visibility="{Binding IsBreak, Converter={StaticResource InvBoolToVis}}">
+                                            <ItemsControl ItemsSource="{Binding BackgroundWords}" Focusable="False" Margin="0,0,0,4"
+                                                          Visibility="{Binding HasBackgroundAbove, Converter={StaticResource BoolToVis}}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                        <TextBlock Text="{Binding Text}" FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <ItemsControl ItemsSource="{Binding Words}" Focusable="False">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                        <TextBlock Text="{Binding Text}" FontSize="40" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                            <!-- second voice (sung in parentheses): smaller, lit by its own timing; under the line, or above it when it comes first -->
+                                            <ItemsControl ItemsSource="{Binding BackgroundWords}" Focusable="False" Margin="0,4,0,0"
+                                                          Visibility="{Binding HasBackgroundBelow, Converter={StaticResource BoolToVis}}">
+                                                <ItemsControl.ItemsPanel>
+                                                    <ItemsPanelTemplate>
+                                                        <WrapPanel />
+                                                    </ItemsPanelTemplate>
+                                                </ItemsControl.ItemsPanel>
+                                                <ItemsControl.ItemTemplate>
+                                                    <DataTemplate DataType="{x:Type m:LyricWord}">
+                                                        <TextBlock Text="{Binding Text}" FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                    </DataTemplate>
+                                                </ItemsControl.ItemTemplate>
+                                            </ItemsControl>
+                                        </StackPanel>
                                         <StackPanel Orientation="Horizontal" Height="56" RenderTransformOrigin="0,0.5"
                                                     Visibility="{Binding IsBreak, Converter={StaticResource BoolToVis}}">
                                             <StackPanel.RenderTransform>

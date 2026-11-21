@@ -80,6 +80,9 @@ public sealed class DiscordPresence : IDisposable
             case nameof(MainViewModel.IsPlaying):
             case nameof(MainViewModel.DurationSeconds):
             case nameof(MainViewModel.ShowOnDiscord):
+            case nameof(MainViewModel.DiscordShowSong):
+            case nameof(MainViewModel.DiscordShowCover):
+            case nameof(MainViewModel.DiscordShowProgress):
                 Refresh();
                 break;
         }
@@ -108,21 +111,26 @@ public sealed class DiscordPresence : IDisposable
         {
             var duration = TimeSpan.FromSeconds(Math.Max(_vm.DurationSeconds > 1 ? _vm.DurationSeconds : 0, t.Duration.TotalSeconds));
             var start = DateTimeOffset.UtcNow - _vm.PlaybackPosition;
-            var assets = new JsonObject
+            var song = _vm.DiscordShowSong;
+            // The cover would give the song away, so it only shows along with it.
+            var cover = song && _vm.DiscordShowCover && t.ImageUrl is { } img && img.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? img : null;
+            var assets = new JsonObject { ["large_image"] = cover ?? Icon };
+            if (cover != null)
             {
-                ["large_image"] = t.ImageUrl is { } img && img.StartsWith("http", StringComparison.OrdinalIgnoreCase) ? img : Icon,
-                ["small_image"] = Icon,
-                ["small_text"] = "Yesify",
-            };
-            if (Text(t.Album) is { } album) assets["large_text"] = album;
-            activity = new JsonObject
+                // Yesify's icon in the corner of the cover.
+                assets["small_image"] = Icon;
+                assets["small_text"] = "Yesify";
+            }
+            if (song && Text(t.Album) is { } album) assets["large_text"] = album;
+            else if (!song) assets["large_text"] = "Yesify";
+            // Without the song it's just "Listening to Yesify" (the app's name).
+            activity = new JsonObject { ["type"] = 2, ["assets"] = assets }; // 2 = Listening
+            if (song)
             {
-                ["type"] = 2, // Listening
-                ["details"] = Text(t.Title) ?? "Unknown song",
-                ["state"] = Text(t.Artist) ?? "Unknown artist",
-                ["assets"] = assets,
-            };
-            if (duration > TimeSpan.Zero)
+                activity["details"] = Text(t.Title) ?? "Unknown song";
+                activity["state"] = Text(t.Artist) ?? "Unknown artist";
+            }
+            if (_vm.DiscordShowProgress && duration > TimeSpan.Zero)
                 activity["timestamps"] = new JsonObject
                 {
                     ["start"] = start.ToUnixTimeMilliseconds(),

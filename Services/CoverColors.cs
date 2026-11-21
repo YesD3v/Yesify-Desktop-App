@@ -33,7 +33,7 @@ public static class CoverColors
             {
                 var (pixels, w, h) = Decode(bytes, 48);
                 var (a, b, all) = Average(pixels, w, h);
-                return new Backdrop(DecodeImage(bytes, 64), Tune(a, vivid: true), Tune(b, vivid: true), Tune(all, vivid: true));
+                return new Backdrop(BlurredImage(bytes, 64), Tune(a, vivid: true), Tune(b, vivid: true), Tune(all, vivid: true));
             });
             lock (BackdropCache)
             {
@@ -88,6 +88,46 @@ public static class CoverColors
         img.EndInit();
         img.Freeze(); // usable from the UI thread
         return img;
+    }
+
+    /// <summary>
+    /// The backdrop picture, blurred here once (a tiny image, so it's instant). It used to be blurred live by
+    /// two full-window blur effects, redrawn on every frame of each 800 ms cross-fade between songs.
+    /// </summary>
+    private static BitmapSource BlurredImage(byte[] bytes, int width)
+    {
+        var (px, w, h) = Decode(bytes, width);
+        // Three box passes each way approximate a Gaussian (sigma about 1.4 px here, ~30 px on screen).
+        for (var pass = 0; pass < 3; pass++)
+        {
+            BoxBlur(px, w, h, horizontal: true);
+            BoxBlur(px, w, h, horizontal: false);
+        }
+        var bmp = BitmapSource.Create(w, h, 96, 96, PixelFormats.Bgra32, null, px, w * 4);
+        bmp.Freeze();
+        return bmp;
+    }
+
+    private static void BoxBlur(byte[] px, int w, int h, bool horizontal)
+    {
+        const int r = 1;
+        int lines = horizontal ? h : w, len = horizontal ? w : h;
+        var line = new int[len * 4];
+        for (var l = 0; l < lines; l++)
+        {
+            int Index(int k) => (horizontal ? l * w + k : k * w + l) * 4;
+            for (var k = 0; k < len; k++)
+                for (var c = 0; c < 4; c++) line[k * 4 + c] = px[Index(k) + c];
+            for (var k = 0; k < len; k++)
+            {
+                for (var c = 0; c < 4; c++)
+                {
+                    var sum = 0;
+                    for (var d = -r; d <= r; d++) sum += line[Math.Clamp(k + d, 0, len - 1) * 4 + c]; // edges clamp
+                    px[Index(k) + c] = (byte)(sum / (2 * r + 1));
+                }
+            }
+        }
     }
 
     private static (byte[] Pixels, int W, int H) Decode(byte[] bytes, int width)

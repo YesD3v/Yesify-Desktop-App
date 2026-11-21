@@ -5,6 +5,27 @@
              ShutdownMode="OnExplicitShutdown">
     <Application.Resources>
         <ResourceDictionary>
+            <!-- explicit mark: a rounded tile with the E cut out of it (vector, so it stays crisp and the background shows through) -->
+            <BooleanToVisibilityConverter x:Key="ExplicitVis" />
+            <Style x:Key="ExplicitMark" TargetType="Path">
+                <Setter Property="Width" Value="12.5" />
+                <Setter Property="Height" Value="12.5" />
+                <Setter Property="Stretch" Value="None" />
+                <Setter Property="Margin" Value="0,0,6,0" />
+                <Setter Property="VerticalAlignment" Value="Center" />
+                <Setter Property="SnapsToDevicePixels" Value="True" />
+                <Setter Property="ToolTip" Value="Explicit" />
+                <Setter Property="Fill" Value="{DynamicResource InactiveIconBrush}" />
+                <Setter Property="Data">
+                    <Setter.Value>
+                        <GeometryGroup FillRule="EvenOdd">
+                            <RectangleGeometry Rect="0,0,12.5,12.5" RadiusX="2.9" RadiusY="2.9" />
+                            <PathGeometry Figures="M4.1,3 H8.5 V4.45 H5.7 V5.55 H8.15 V6.95 H5.7 V8.05 H8.5 V9.5 H4.1 Z" />
+                        </GeometryGroup>
+                    </Setter.Value>
+                </Setter>
+            </Style>
+
             <!-- Palette -->
             <Color x:Key="AccentColor">#FFFFFFFF</Color>
             <SolidColorBrush x:Key="AccentBrush" Color="{StaticResource AccentColor}" />

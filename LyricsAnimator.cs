@@ -22,6 +22,21 @@ public sealed class LyricsAnimator
 {
     private static readonly Color Lit = Colors.White;
     private static readonly Color Unlit = Color.FromArgb(0x59, 0xFF, 0xFF, 0xFF);
+    // The second voice (backing vocals) is a little softer than the main one, lit or not.
+    private static readonly Color BackgroundLit = Color.FromArgb(0xD0, 0xFF, 0xFF, 0xFF);
+    private static readonly Color BackgroundUnlit = Color.FromArgb(0x40, 0xFF, 0xFF, 0xFF);
+
+    /// <summary>
+    /// A word is lit over at most this long. Some sources stretch a line's last word over the instrumental
+    /// that follows it, which crawled the light across that word for half a minute.
+    /// </summary>
+    private static readonly TimeSpan LongestWord = TimeSpan.FromSeconds(2.5);
+
+    /// <summary>
+    /// After a line's last word, how long it stays lit before dimming when nothing is sung next (an outro,
+    /// a long pause); otherwise the last line stayed lit through the whole instrumental ending.
+    /// </summary>
+    private static readonly TimeSpan LingerAfterLine = TimeSpan.FromSeconds(1.2);
     private const double Feather = 0.35; // width of the soft edge, relative to the word
     private static readonly Duration Ease = new(TimeSpan.FromMilliseconds(280));
 
@@ -55,14 +70,40 @@ public sealed class LyricsAnimator
         _resync.Stop();
     }
 
+    private bool _renderQueued;
+
+    // The active line's word blocks, found once instead of searching the visual tree on every frame.
+    private int _rootIdx = -1;
+    private FrameworkElement? _root;
+    private List<TextBlock>? _rootWords;
+    private bool _unsynced;
+
     private void OnLyricsReplaced(object? sender, System.Collections.Specialized.NotifyCollectionChangedEventArgs e)
     {
-        _active = -1; // new song: containers are rebuilt
-        _userScrolled = false;
-        _resync.Stop();
+        // Lines arrive a few per frame; only a clear (a new song) starts over.
+        _unsynced = _vm.Lyrics.Count > 0 && _vm.Lyrics.All(l => l.Time == null);
+        if (e.Action != System.Collections.Specialized.NotifyCollectionChangedAction.Add)
+        {
+            _rootIdx = -1;
+            _root = null;
+            _rootWords = null;
+            _active = -1; // new song: containers are rebuilt
+            _userScrolled = false;
+            _resync.Stop();
+            // Back to the top while the list is empty, so the new song never starts at the old one's scroll.
+            _scroller.BeginAnimation(ScrollAnimator.OffsetProperty, null);
+            _scroller.ScrollToVerticalOffset(0);
+        }
         // Paused (or not playing yet) there's no per-frame pass to pick the new lines up: render once they're built.
-        if (!_perFrame && _vm.Lyrics.Count > 0)
-            _list.Dispatcher.BeginInvoke(() => Render(_vm.AudioPosition, sweep: true), DispatcherPriority.Loaded);
+        if (!_perFrame && _vm.Lyrics.Count > 0 && !_renderQueued)
+        {
+            _renderQueued = true;
+            _list.Dispatcher.BeginInvoke(() =>
+            {
+                _renderQueued = false;
+                Render(_vm.AudioPosition, sweep: true);
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     /// <summary>
@@ -107,9 +148,11 @@ public sealed class LyricsAnimator
     /// <summary>A fresh brush per word (the sweep moves its gradient stops).</summary>
     public static Brush NewWordBrush(LyricWord word)
     {
-        if (word.End == TimeSpan.Zero) return new SolidColorBrush(Color.FromArgb(0xCC, 0xFF, 0xFF, 0xFF)); // unsynced lyrics
+        if (word.End == TimeSpan.Zero) // unsynced lyrics
+            return new SolidColorBrush(Color.FromArgb(word.IsBackground ? (byte)0x8C : (byte)0xCC, 0xFF, 0xFF, 0xFF));
+        Color lit = word.IsBackground ? BackgroundLit : Lit, unlit = word.IsBackground ? BackgroundUnlit : Unlit;
         return new LinearGradientBrush(
-            [new GradientStop(Lit, 0), new GradientStop(Lit, -Feather), new GradientStop(Unlit, 0), new GradientStop(Unlit, 1)],
+            [new GradientStop(lit, 0), new GradientStop(lit, -Feather), new GradientStop(unlit, 0), new GradientStop(unlit, 1)],
             new Point(0, 0.5), new Point(1, 0.5));
     }
 
@@ -147,24 +190,28 @@ public sealed class LyricsAnimator
     private void Render(TimeSpan pos, bool sweep)
     {
         var lines = _vm.Lyrics;
-        if (lines.Count == 0 || lines.All(l => l.Time == null)) return; // unsynced: nothing to follow
+        if (lines.Count == 0 || _unsynced) return; // unsynced: nothing to follow
 
         var idx = -1;
         for (var i = 0; i < lines.Count; i++)
         {
             if (lines[i].Time is not { } t) continue;
-            if (t <= pos + TimeSpan.FromMilliseconds(100)) idx = i;
+            if (Starts(lines[i], t) <= pos + TimeSpan.FromMilliseconds(100)) idx = i;
             else break;
         }
+        // Sung, and nothing after it yet (an outro, a long pause): the line dims instead of staying lit
+        // through the music. The view stays where it is.
+        var finished = idx >= 0 && Ends(lines[idx]) is { } sungUntil && pos > sungUntil + LingerAfterLine;
+        if (finished) idx = -1;
 
         if (idx != _active)
         {
             if (_active >= 0 && _active < lines.Count) SetLine(_active, active: false);
             _active = idx;
             if (idx >= 0) SetLine(idx, active: true);
-            if (!_userScrolled) ScrollTo(idx);
+            if (!_userScrolled && !finished) ScrollTo(idx);
         }
-        if (idx < 0 || Line(idx) is not { } root) return;
+        if (idx < 0 || ActiveRoot(idx) is not { } root) return;
 
         var line = lines[idx];
         if (line.IsBreak)
@@ -177,13 +224,35 @@ public sealed class LyricsAnimator
 
         // Only sweep word by word when the source timed each word; guessed timing would drift, so the whole line lights up.
         sweep &= line.IsWordTimed;
-        var words = Words(root);
-        for (var i = 0; i < words.Count && i < line.Words.Count; i++)
+        var words = _rootWords ?? Words(root);
+        if (_rootWords == null && words.Count > 0) _rootWords = words; // kept once its words are built
+        // Each block lights from its own word's timing (main line and second voice alike).
+        foreach (var tb in words)
         {
-            var w = line.Words[i];
-            var p = sweep ? Math.Clamp((pos - w.Start).TotalSeconds / Math.Max(0.05, (w.End - w.Start).TotalSeconds), 0, 1) : 1;
-            SetWord(words[i], p);
+            if (tb.DataContext is not LyricWord w) continue;
+            var p = sweep ? Math.Clamp((pos - w.Start).TotalSeconds / Math.Max(0.05, Length(w).TotalSeconds), 0, 1) : 1;
+            SetWord(tb, p);
         }
+    }
+
+    private static TimeSpan Length(LyricWord w) => w.End - w.Start > LongestWord ? LongestWord : w.End - w.Start;
+
+    /// <summary>When a line lights up: its first sung word for word-timed lines (a line's own start can sit in the silence before it).</summary>
+    private static TimeSpan Starts(LyricLine line, TimeSpan time)
+    {
+        if (!line.IsWordTimed || line.Words.Count == 0) return time;
+        // The first word sung, by either voice (a second voice above the line comes first).
+        var first = line.Words.Concat(line.BackgroundWords).Min(w => w.Start) - TimeSpan.FromMilliseconds(250);
+        return first > time ? first : time;
+    }
+
+    /// <summary>When a line is done being sung: its last word (capped), or the line's end when words are estimated.</summary>
+    private static TimeSpan? Ends(LyricLine line)
+    {
+        if (line.IsBreak) return null;
+        if (line.IsWordTimed && line.Words.Count > 0)
+            return line.Words.Concat(line.BackgroundWords).Max(w => w.Start + Length(w));
+        return line.End;
     }
 
     // Lit part grows from the left with a feathered edge: p=0 all unlit, p=1 all lit.
@@ -318,7 +387,8 @@ public sealed class LyricsAnimator
         if (Line(_active) is not { IsVisible: true })
         {
             // The rows for freshly loaded lyrics aren't built on the first pass: try the next ones.
-            if (++_layoutTries > 30) StopWaiting();
+            // (Lines arrive a few per frame, so a line far down can take a while.)
+            if (++_layoutTries > 150) StopWaiting();
             return;
         }
         StopWaiting();
@@ -331,6 +401,17 @@ public sealed class LyricsAnimator
         _list.LayoutUpdated -= OnLayoutUpdated;
         _scrollPending = false;
         _layoutTries = 0;
+    }
+
+    /// <summary>The active line's root, remembered while it stays the active line (not remembered until it's built).</summary>
+    private FrameworkElement? ActiveRoot(int idx)
+    {
+        if (idx == _rootIdx && _root is { IsLoaded: true }) return _root;
+        _rootIdx = idx;
+        _rootWords = null;
+        _root = Line(idx);
+        if (_root is not { IsLoaded: true }) _rootIdx = -1; // try again next frame
+        return _root;
     }
 
     private FrameworkElement? Line(int idx) =>

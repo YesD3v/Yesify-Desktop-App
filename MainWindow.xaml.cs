@@ -1114,6 +1114,25 @@ public partial class MainWindow : Window, IFrostSource
         _cinemaLyrics.Resync();
         Vm.SeekToLyric(line);
     }
+    /// <summary>
+    /// The cinema lyrics fade out at the top and bottom edges of the view. A relative gradient would be
+    /// stretched over all the lyrics (the whole song's height), so the first and last lines sat in the fade;
+    /// this one is measured in pixels of what's on screen.
+    /// </summary>
+    private void CinemaLyricsScroller_SizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var h = e.NewSize.Height;
+        if (h <= 0) return;
+        double top = Math.Min(56, h * 0.08), bottom = Math.Min(130, h * 0.16);
+        var mask = new LinearGradientBrush { MappingMode = BrushMappingMode.Absolute, StartPoint = new Point(0, 0), EndPoint = new Point(0, h) };
+        mask.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 0));
+        mask.GradientStops.Add(new GradientStop(Colors.Black, top / h));
+        mask.GradientStops.Add(new GradientStop(Colors.Black, 1 - bottom / h));
+        mask.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 1));
+        mask.Freeze();
+        CinemaLyricsScroller.OpacityMask = mask;
+    }
+
     private void LyricWord_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is TextBlock { DataContext: LyricWord word } tb) tb.Foreground = LyricsAnimator.NewWordBrush(word);

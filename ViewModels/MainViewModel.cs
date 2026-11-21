@@ -459,6 +459,45 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
         }
     }
 
+    /// <summary>Discord status: the song's title and artist. Off, it only says "Listening to Yesify".</summary>
+    public bool DiscordShowSong
+    {
+        get => _settings.DiscordShowSong;
+        set
+        {
+            if (_settings.DiscordShowSong == value) return;
+            _settings.DiscordShowSong = value;
+            SaveSettings();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Discord status: the album cover (Yesify's icon otherwise). Only with the song shown.</summary>
+    public bool DiscordShowCover
+    {
+        get => _settings.DiscordShowCover;
+        set
+        {
+            if (_settings.DiscordShowCover == value) return;
+            _settings.DiscordShowCover = value;
+            SaveSettings();
+            OnPropertyChanged();
+        }
+    }
+
+    /// <summary>Discord status: the progress bar (time into the song).</summary>
+    public bool DiscordShowProgress
+    {
+        get => _settings.DiscordShowProgress;
+        set
+        {
+            if (_settings.DiscordShowProgress == value) return;
+            _settings.DiscordShowProgress = value;
+            SaveSettings();
+            OnPropertyChanged();
+        }
+    }
+
     /// <summary>The artwork the glass background is made from: the open playlist/album, else the current song.</summary>
     public string? BackdropImageUrl => CurrentTrack?.ImageUrl ?? CurrentCollection?.ImageUrl ?? ViewImageUrl;
 
@@ -1115,7 +1154,13 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             var path = await _youtube.GetAudioFileAsync(track, cts.Token);
             if (cts.IsCancellationRequested) return;
 
-            _player.Play(path);
+            var opened = await AudioPlayer.OpenAsync(path);
+            if (cts.IsCancellationRequested)
+            {
+                opened.Dispose(); // skipped again while it opened
+                return;
+            }
+            _player.Play(opened);
             _listenTrack = track;
             if (ReferenceEquals(track, _resumeTrack) && _resumeAt > TimeSpan.FromSeconds(1))
                 _player.Seek(_resumeAt); // continuing the restored session
@@ -1384,7 +1429,17 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
             Lyrics.Clear();
             CurrentLyric = null;
             CurrentLyricIndex = -1;
-            foreach (var l in lines) Lyrics.Add(l);
+            for (var i = 0; i < lines.Count; i++)
+            {
+                Lyrics.Add(lines[i]);
+                // A few lines per frame: each line is a row of word blocks, and building a whole song's worth
+                // at once froze the window for up to half a second (worst in cinema).
+                if (i >= 5 && i % 3 == 2 && i < lines.Count - 1)
+                {
+                    await System.Windows.Threading.Dispatcher.Yield(System.Windows.Threading.DispatcherPriority.Background);
+                    if (cts.IsCancellationRequested) return;
+                }
+            }
             LyricsStatus = lines.Count == 0 ? "No lyrics found for this song." : "";
             if (!_player.HasTrack) ShowRestoredLyricLine(); // paused restored song: its line, not the first
         }
