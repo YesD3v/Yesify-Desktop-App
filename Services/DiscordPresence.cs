@@ -1,4 +1,4 @@
-using System.Buffers.Binary;
+﻿using System.Buffers.Binary;
 using System.ComponentModel;
 using System.IO;
 using System.IO.Pipes;
@@ -19,7 +19,31 @@ namespace Yesify.Services;
 public sealed class DiscordPresence : IDisposable
 {
     private const string ClientId = "1563571555647234158";
-    private const string Icon = "https://cdn.discordapp.com/app-icons/1563571555647234158/b96915ea3390fd742d80473deda8c125.png?size=256";
+    /// <summary>
+    /// The app's icon on Discord's CDN. Its address contains a hash of the picture, so a new icon uploaded in
+    /// the Discord developer portal gets a new address (the old one keeps showing the old picture). The
+    /// current one is looked up at start (<see cref="LookUpIconAsync"/>); this is the fallback.
+    /// </summary>
+    private static string _icon = IconUrl("4976192bfc2e03c51ae8ea10248cca96");
+    private static string Icon => _icon;
+
+    private static string IconUrl(string hash) => $"https://cdn.discordapp.com/app-icons/{ClientId}/{hash}.png?size=256";
+
+    /// <summary>Asks Discord for the app's current icon (public, no login), so icon changes show without an update.</summary>
+    private async Task LookUpIconAsync()
+    {
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+            var json = JsonNode.Parse(await http.GetStringAsync($"https://discord.com/api/v10/applications/{ClientId}/rpc", _cts.Token));
+            if ((string?)json?["icon"] is { Length: > 0 } hash && IconUrl(hash) != _icon)
+            {
+                _icon = IconUrl(hash);
+                Refresh(); // re-send the status with the new icon
+            }
+        }
+        catch { /* offline or changed: keep the built-in icon */ }
+    }
     private static readonly TimeSpan RetryDelay = TimeSpan.FromSeconds(20);
 
     private readonly MainViewModel _vm;
@@ -41,6 +65,7 @@ public sealed class DiscordPresence : IDisposable
         _vm.Seeked += Refresh;
         WatchTrack(_vm.CurrentTrack);
         _ = Task.Run(() => RunAsync(_cts.Token));
+        _ = LookUpIconAsync();
     }
 
     // ---------------------------------------------------------------- following the player
