@@ -408,7 +408,13 @@ public partial class MainWindow : Window, IFrostSource
         var typing = Keyboard.FocusedElement is TextBox;
         if (e.Key == Key.Escape && Vm.IsCinema && !Vm.IsSettingsOpen && !Vm.IsEditingPlaylist && !Vm.IsImporting)
         {
-            Vm.IsCinema = false;
+            if (_fullscreen) SetFullscreen(false);
+            else Vm.IsCinema = false;
+            e.Handled = true;
+        }
+        else if (e.Key == Key.F11 && Vm.IsCinema)
+        {
+            SetFullscreen(!_fullscreen);
             e.Handled = true;
         }
         else if (e.Key == Key.Escape && (Vm.IsSettingsOpen || Vm.IsEditingPlaylist || Vm.IsImporting))
@@ -1035,6 +1041,8 @@ public partial class MainWindow : Window, IFrostSource
             Cinema.RenderTransform = zoom = new ScaleTransform(1, 1);
         Cinema.RenderTransformOrigin = new Point(0.5, 0.5);
 
+        ShowCinemaChrome(true); // buttons start visible, then fade once the mouse rests
+        if (!on) SetFullscreen(false);
         if (on)
         {
             Cinema.Visibility = Visibility.Visible;
@@ -1128,6 +1136,110 @@ public partial class MainWindow : Window, IFrostSource
         if (sender is FrameworkElement { DataContext: Track track } && ReferenceEquals(track, _warmCandidate)) _warmTimer?.Stop();
     }
 
+    // ---------------------------------------------------------------- cinema: buttons fade when the mouse rests
+
+    // ---------------------------------------------------------------- cinema: full screen
+
+    private bool _fullscreen;
+    private bool _wasMaximized;
+    private Rect _windowedBounds;
+
+    private void CinemaFullscreen_Click(object sender, RoutedEventArgs e) => SetFullscreen(!_fullscreen);
+
+    /// <summary>
+    /// Full screen (cinema only), the plain WPF way: the window is placed over the whole screen it's on
+    /// (taskbar area included) and kept on top; leaving puts it back where it was (normal or maximized).
+    /// Nothing about the window's frame or style is changed, so Windows never redraws an old-style frame.
+    /// </summary>
+    private void SetFullscreen(bool on)
+    {
+        if (on == _fullscreen) return;
+        var hwnd = new System.Windows.Interop.WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero || PresentationSource.FromVisual(this)?.CompositionTarget is not { } target) return;
+        _fullscreen = on;
+        if (on)
+        {
+            _wasMaximized = WindowState == WindowState.Maximized;
+            _windowedBounds = _wasMaximized ? RestoreBounds : new Rect(Left, Top, Width, Height);
+            // The screen the window is on, in device pixels, then in WPF units.
+            var info = new MonitorInfo { Size = System.Runtime.InteropServices.Marshal.SizeOf<MonitorInfo>() };
+            GetMonitorInfo(MonitorFromWindow(hwnd, 2 /* nearest */), ref info);
+            var m = info.Monitor;
+            var toWpf = target.TransformFromDevice;
+            var topLeft = toWpf.Transform(new Point(m.Left, m.Top));
+            var bottomRight = toWpf.Transform(new Point(m.Right, m.Bottom));
+            if (_wasMaximized) WindowState = WindowState.Normal;
+            Topmost = true;
+            Left = topLeft.X;
+            Top = topLeft.Y;
+            Width = bottomRight.X - topLeft.X;
+            Height = bottomRight.Y - topLeft.Y;
+            SetCorners(hwnd, 1); // square corners at the screen's edges
+        }
+        else
+        {
+            Topmost = false;
+            SetCorners(hwnd, 2);
+            Left = _windowedBounds.Left;
+            Top = _windowedBounds.Top;
+            Width = _windowedBounds.Width;
+            Height = _windowedBounds.Height;
+            if (_wasMaximized) WindowState = WindowState.Maximized;
+        }
+        CinemaFullButton.Content = on ? "\uE73F" : "\uE740";
+        CinemaFullButton.ToolTip = on ? "Exit full screen (Esc)" : "Full screen (F11)";
+        UpdateMaximizedState();
+    }
+
+    private static void SetCorners(IntPtr hwnd, int preference) =>
+        DwmSetWindowAttribute(hwnd, 33 /* DWMWA_WINDOW_CORNER_PREFERENCE */, ref preference, sizeof(int));
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct NativeRect { public int Left, Top, Right, Bottom; }
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct MonitorInfo { public int Size; public NativeRect Monitor; public NativeRect Work; public uint Flags; }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr MonitorFromWindow(IntPtr hwnd, uint flags);
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
+
+    private DispatcherTimer? _cinemaIdle;
+    private Point _cinemaMouse;
+
+    private void Cinema_MouseMove(object sender, MouseEventArgs e)
+    {
+        // Ignore the tiny "moves" Windows reports without the mouse moving (e.g. when something redraws).
+        var at = e.GetPosition(this);
+        if ((at - _cinemaMouse).Length < 2) return;
+        _cinemaMouse = at;
+        ShowCinemaChrome(true);
+    }
+
+    /// <summary>
+    /// Cinema's top buttons (and the pointer) show while the mouse moves and fade out after 2.5 s of rest,
+    /// unless the pointer is on them.
+    /// </summary>
+    private void ShowCinemaChrome(bool show)
+    {
+        _cinemaIdle ??= new DispatcherTimer(TimeSpan.FromSeconds(2.5), DispatcherPriority.Background, (_, _) =>
+        {
+            _cinemaIdle!.Stop();
+            if (Vm.IsCinema && !CinemaChrome.IsMouseOver) ShowCinemaChrome(false);
+        }, Dispatcher);
+        _cinemaIdle.Stop();
+        if (show && Vm.IsCinema) _cinemaIdle.Start();
+
+        var visible = show || !Vm.IsCinema;
+        if (CinemaChrome.IsHitTestVisible == visible && CinemaChrome.Tag is not null) return;
+        CinemaChrome.Tag = true;
+        CinemaChrome.IsHitTestVisible = visible;
+        CinemaChrome.BeginAnimation(OpacityProperty, new DoubleAnimation(visible ? 1 : 0, TimeSpan.FromMilliseconds(visible ? 180 : 450)));
+        Cinema.Cursor = visible ? null : Cursors.None;
+    }
+
     private void Status_Click(object sender, MouseButtonEventArgs e) => Vm.StatusText = "";
 
     // ---------------------------------------------------------------- settings
@@ -1151,6 +1263,9 @@ public partial class MainWindow : Window, IFrostSource
         // A maximized borderless window overhangs the screen by the resize border.
         Root.Margin = max ? new Thickness(7) : new Thickness(0);
         Backdrop.Margin = Root.Margin;
+        Cinema.Margin = Root.Margin; // cinema's buttons sit where the normal title bar's do
+        CinemaMaxButton.Content = max ? "" : ""; // restore / maximize
+        CinemaMaxButton.ToolTip = max ? "Restore" : "Maximize";
         MaxButton.Content = max ? "" : "";
     }
 }

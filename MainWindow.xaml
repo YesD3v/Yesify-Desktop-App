@@ -1560,7 +1560,7 @@
         <!-- ============================================================ cinema
              The whole window: big cover with the song under it on the left, big lyrics on the right that
              fade into the backdrop at the top and bottom. Shown and hidden by MainWindow.UpdateCinema. -->
-        <Grid x:Name="Cinema" Visibility="Collapsed" Opacity="0">
+        <Grid x:Name="Cinema" Visibility="Collapsed" Opacity="0" Background="Transparent" MouseMove="Cinema_MouseMove">
             <Rectangle>
                 <Rectangle.Fill>
                     <LinearGradientBrush StartPoint="0,0" EndPoint="1,0">
@@ -1570,18 +1570,30 @@
                 </Rectangle.Fill>
             </Rectangle>
 
-            <!-- top: leave, and the window buttons -->
-            <Button Style="{StaticResource GlassIconButton}" Content="&#xE70D;" Width="40" Height="34" HorizontalAlignment="Left" VerticalAlignment="Top" Margin="12,6,0,0"
-                    Command="{Binding ToggleCinemaCommand}" ToolTip="Leave cinema (Esc)" WindowChrome.IsHitTestVisibleInChrome="True" />
-            <Border HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,6,10,0" Padding="3" CornerRadius="11"
-                    Background="{DynamicResource GlassChipBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
-                    WindowChrome.IsHitTestVisibleInChrome="True">
-                <StackPanel Orientation="Horizontal">
-                    <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="Minimize_Click" ToolTip="Minimize" />
-                    <Button Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="Maximize_Click" ToolTip="Maximize" />
-                    <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Click="Close_Click" ToolTip="Close (keeps playing in the tray)" />
+            <!-- top: leave, and the window buttons. Laid out exactly like the normal title bar (a 46 px row,
+                 the same margins); they fade away when the mouse rests and come back when it moves. -->
+            <Grid x:Name="CinemaChrome" Height="46" VerticalAlignment="Top" Panel.ZIndex="1">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="0,0,10,0">
+                <!-- cinema's own bubble: full screen, and leave -->
+                <Border Padding="3" CornerRadius="11" Margin="0,0,8,0"
+                        Background="{DynamicResource GlassChipBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <StackPanel Orientation="Horizontal">
+                        <Button x:Name="CinemaFullButton" Style="{StaticResource CaptionButton}" Content="&#xE740;" Click="CinemaFullscreen_Click" ToolTip="Full screen (F11)" />
+                        <Button Style="{StaticResource CaptionButton}" Content="&#xE70D;" Command="{Binding ToggleCinemaCommand}" ToolTip="Leave cinema (Esc)" />
+                    </StackPanel>
+                </Border>
+                <Border Padding="3" CornerRadius="11"
+                        Background="{DynamicResource GlassChipBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1"
+                        WindowChrome.IsHitTestVisibleInChrome="True">
+                    <StackPanel Orientation="Horizontal">
+                        <Button Style="{StaticResource CaptionButton}" Content="&#xE921;" Click="Minimize_Click" ToolTip="Minimize" />
+                        <Button x:Name="CinemaMaxButton" Style="{StaticResource CaptionButton}" Content="&#xE922;" Click="Maximize_Click" ToolTip="Maximize" />
+                        <Button Style="{StaticResource CloseButton}" Content="&#xE8BB;" Click="Close_Click" ToolTip="Close (keeps playing in the tray)" />
+                    </StackPanel>
+                </Border>
                 </StackPanel>
-            </Border>
+            </Grid>
 
             <Grid Margin="56,56,40,24">
                 <Grid.ColumnDefinitions>
