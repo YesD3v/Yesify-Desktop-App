@@ -247,22 +247,54 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
     private void RefreshQueue()
     {
         ScheduleSessionSave();
-        if (!ShowQueue) return; // only maintained while someone is looking at it
+        // Kept up to date even while the Lyrics tab is showing (only what changed is touched, see Sync), so
+        // switching to the queue shows it at once instead of building every row then. Cinema covers it: it
+        // catches up when cinema closes.
+        if (IsCinema) return;
 
         var cap = QueueExpanded ? int.MaxValue : QueuePageSize;
         var total = _upNext.Count + Math.Max(0, _order.Count - _orderPos - 1);
 
-        UpNextView.Clear();
-        for (var i = 0; i < _upNext.Count && UpNextView.Count < cap; i++)
-            UpNextView.Add(new QueueItem(_upNext[i], QueueSource.Queued, i));
-        for (var p = _orderPos + 1; p < _order.Count && UpNextView.Count < cap; p++)
-            UpNextView.Add(new QueueItem(_context[_order[p]], QueueSource.Context, p));
+        var upNext = new List<QueueItem>();
+        for (var i = 0; i < _upNext.Count && upNext.Count < cap; i++)
+            upNext.Add(new QueueItem(_upNext[i], QueueSource.Queued, i));
+        for (var p = _orderPos + 1; p < _order.Count && upNext.Count < cap; p++)
+            upNext.Add(new QueueItem(_context[_order[p]], QueueSource.Context, p));
+        Sync(UpNextView, upNext);
 
         HasMoreUpNext = total > UpNextView.Count;
         OnPropertyChanged(nameof(HasMoreUpNext));
 
-        HistoryView.Clear();
-        for (var i = 0; i < _history.Count; i++) HistoryView.Add(new QueueItem(_history[i], QueueSource.History, i));
+        Sync(HistoryView, _history.Select((t, i) => new QueueItem(t, QueueSource.History, i)).ToList());
+    }
+
+    /// <summary>
+    /// Makes <paramref name="shown"/> match <paramref name="wanted"/> by moving, adding and removing only what
+    /// differs, so rows that stay keep their built row (and its cover) instead of the whole list being rebuilt.
+    /// </summary>
+    private static void Sync<T>(ObservableCollection<T> shown, IReadOnlyList<T> wanted)
+    {
+        var comparer = EqualityComparer<T>.Default;
+        // Nothing in common (another playlist): starting over is cheaper than shuffling row by row.
+        if (shown.Count > 0)
+        {
+            var keep = new HashSet<T>(wanted);
+            if (!shown.Any(keep.Contains)) shown.Clear();
+        }
+        for (var i = 0; i < wanted.Count; i++)
+        {
+            if (i < shown.Count && comparer.Equals(shown[i], wanted[i])) continue;
+            var at = -1;
+            for (var j = i + 1; j < shown.Count; j++)
+                if (comparer.Equals(shown[j], wanted[i]))
+                {
+                    at = j;
+                    break;
+                }
+            if (at >= 0) shown.Move(at, i);
+            else shown.Insert(i, wanted[i]);
+        }
+        while (shown.Count > wanted.Count) shown.RemoveAt(shown.Count - 1);
     }
 
     [RelayCommand]
@@ -443,6 +475,44 @@ public sealed partial class MainViewModel : ObservableObject, IDisposable
 
     private static string FormatSize(long bytes) =>
         bytes >= 1L << 30 ? $"{bytes / (double)(1L << 30):0.#} GB" : $"{bytes / (double)(1L << 20):0} MB";
+
+    // ================================================================ idle screen
+
+    /// <summary>The choices on the idle slider, in seconds (0 = never), shortest first.</summary>
+    private static readonly int[] IdleSteps = [30, 60, 120, 180, 300, 600, 900, 1800, 3600, 0];
+
+    /// <summary>Seconds without any input before the idle screen shows; 0 = never.</summary>
+    public int IdleSeconds => _settings.IdleSeconds;
+
+    /// <summary>The idle slider's position (an index into <see cref="IdleSteps"/>).</summary>
+    public double IdleStep
+    {
+        get
+        {
+            var i = Array.IndexOf(IdleSteps, _settings.IdleSeconds);
+            return i >= 0 ? i : Array.IndexOf(IdleSteps, 180);
+        }
+        set
+        {
+            var seconds = IdleSteps[Math.Clamp((int)Math.Round(value), 0, IdleSteps.Length - 1)];
+            if (seconds == _settings.IdleSeconds) return;
+            _settings.IdleSeconds = seconds;
+            SaveSettings();
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(IdleSeconds));
+            OnPropertyChanged(nameof(IdleText));
+        }
+    }
+
+    public double IdleStepMax => IdleSteps.Length - 1;
+
+    public string IdleText => _settings.IdleSeconds switch
+    {
+        0 => "Never",
+        < 60 => $"{_settings.IdleSeconds} s",
+        < 3600 => $"{_settings.IdleSeconds / 60} min",
+        _ => $"{_settings.IdleSeconds / 3600} h",
+    };
 
     // ================================================================ appearance
 

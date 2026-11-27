@@ -46,13 +46,19 @@ public partial class MainWindow : Window, IFrostSource
             new SectionsMarker(),
         };
 
-        _lyrics = new LyricsAnimator(vm, LyricsList, LyricsScroller);
+        _lyrics = new LyricsAnimator(vm, LyricsList, LyricsScroller, blurScale: 0.7);
         LyricsList.IsVisibleChanged += (_, _) => _lyrics.Refresh();
         _cinemaLyrics = new LyricsAnimator(vm, CinemaLyricsList, CinemaLyricsScroller, anchor: 0.4);
         CinemaLyricsList.IsVisibleChanged += (_, _) => _cinemaLyrics.Refresh();
+        System.ComponentModel.DependencyPropertyDescriptor.FromProperty(Border.BackgroundProperty, typeof(Border))
+            .AddValueChanged(CinemaCover, (_, _) => CrossfadeCinemaCover());
 
-        StateChanged += (_, _) => { UpdateMaximizedState(); RepaintAll(); UpdateBackdropMotion(); };
+        StateChanged += (_, _) => { UpdateMaximizedState(); RepaintAll(); UpdateBackdropMotion(); UpdateHomeHero(); _lyrics.Refresh(); _cinemaLyrics.Refresh(); };
+        AudioRing.Source = vm.ReadSpectrum;
+        MainContent.PreviewMouseWheel += HomeSnap_PreviewMouseWheel;
         Activated += (_, _) => RepaintAll();
+        InitIdle();
+        InitUpdate();
         IsVisibleChanged += (_, _) => { RepaintAll(); UpdateBackdropMotion(); };
         Microsoft.Win32.SystemEvents.SessionSwitch += OnSystemWake;
         Microsoft.Win32.SystemEvents.PowerModeChanged += OnSystemWake;
@@ -114,6 +120,7 @@ public partial class MainWindow : Window, IFrostSource
     {
         // The view model lives on; unhook so it doesn't keep this window (and all its images) alive.
         Vm.PropertyChanged -= OnVmPropertyChanged;
+        UnhookUpdate();
         Vm.HomeSections.CollectionChanged -= OnHomeSectionsChanged;
         Vm.Tracks.CollectionChanged -= OnSongCountChanged;
         Vm.SearchOnline.CollectionChanged -= OnSongCountChanged;
@@ -157,7 +164,13 @@ public partial class MainWindow : Window, IFrostSource
                 if (Vm.ShowQueue) EaseInPane();
                 break;
             case nameof(MainViewModel.CurrentTrack):
-                ScrollQueueToNowPlaying();
+                // In cinema the queue is out of sight: it catches up when cinema closes.
+                if (!Vm.IsCinema) ScrollQueueToNowPlaying();
+                else CinemaSongChanged();
+                break;
+            case nameof(MainViewModel.IsLyricsLoading):
+                UpdateLyricsLoading();
+                if (!Vm.IsLyricsLoading) RevealCinemaLyrics();
                 break;
             case nameof(MainViewModel.BackdropImageUrl):
                 _ = UpdateBackdropAsync();
@@ -341,7 +354,7 @@ public partial class MainWindow : Window, IFrostSource
     /// </summary>
     private void UpdateBackdropMotion()
     {
-        var on = Vm.BackdropMotion && IsVisible && WindowState != WindowState.Minimized;
+        var on = Vm.BackdropMotion && IsVisible && WindowState != WindowState.Minimized && !_idle;
         var fps = Vm.BackdropMotionFps;
         if (on == _motionOn && (!on || fps == _motionFps)) return;
         _motionOn = on;
@@ -491,6 +504,53 @@ public partial class MainWindow : Window, IFrostSource
         }, DispatcherPriority.Loaded);
     }
 
+    private bool _sideLyricsHidden;
+
+    /// <summary>
+    /// The side panel while lyrics load: the lines are built out of sight while the loading dots show (they only
+    /// appear if it takes a moment). Once everything is in place the dots fade away first, then the lyrics
+    /// (or the "no lyrics" note) rise in.
+    /// </summary>
+    private void UpdateLyricsLoading()
+    {
+        var dots = LyricsLoadingDots;
+        if (Vm.IsLyricsLoading)
+        {
+            if (Vm.Lyrics.Count > 0 && !_sideLyricsHidden) return; // refetching what's already showing: it stays
+            _sideLyricsHidden = true;
+            foreach (var el in new FrameworkElement[] { LyricsScroller, LyricsStatusText }) el.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.Zero));
+            dots.Visibility = Visibility.Visible;
+            dots.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(260)) { BeginTime = TimeSpan.FromMilliseconds(150) });
+            return;
+        }
+        if (!_sideLyricsHidden) return;
+        // Dots out first (quickly if they had barely shown), then the lyrics in.
+        var shown = dots.Visibility == Visibility.Visible ? dots.Opacity : 0;
+        var fade = new DoubleAnimation(shown, 0, TimeSpan.FromMilliseconds(shown > 0.05 ? 220 : 1));
+        fade.Completed += (_, _) =>
+        {
+            if (Vm.IsLyricsLoading) return; // a new song started meanwhile
+            dots.BeginAnimation(OpacityProperty, null);
+            dots.Visibility = Visibility.Collapsed;
+            // After layout, so the lines are built and scrolled to the line being sung before they show.
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (Vm.IsLyricsLoading || !_sideLyricsHidden) return;
+                _sideLyricsHidden = false;
+                var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+                var d = TimeSpan.FromMilliseconds(480);
+                foreach (var el in new FrameworkElement[] { LyricsScroller, LyricsStatusText })
+                {
+                    el.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, d) { EasingFunction = ease });
+                    if (el.RenderTransform is not TranslateTransform { IsFrozen: false } rise)
+                        el.RenderTransform = rise = new TranslateTransform();
+                    rise.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(22, 0, d) { EasingFunction = ease });
+                }
+            }, DispatcherPriority.ContextIdle);
+        };
+        dots.BeginAnimation(OpacityProperty, fade);
+    }
+
     private void RightSplitter_DragCompleted(object sender, System.Windows.Controls.Primitives.DragCompletedEventArgs e) =>
         Vm.RightPanelWidth = RightColumn.ActualWidth;
 
@@ -626,6 +686,8 @@ public partial class MainWindow : Window, IFrostSource
         items.Add(Item("Start Radio", () => Vm.StartRadioCommand.Execute(track)));
         items.Add(Item("Go to Artist", () => Vm.GoToArtistCommand.Execute(track), track.Artist.Length > 0));
         items.Add(Item("Go to Album", () => Vm.GoToAlbumCommand.Execute(track), MainViewModel.HasAlbum(track)));
+        items.Add(new Separator());
+        items.Add(Item(Vm.IsNotInterested(track) ? "Not Interested (already)" : "Not Interested", () => Vm.NotInterested(track), !Vm.IsNotInterested(track)));
     }
 
     // Artist and album names in song rows and the player bar open their pages.
@@ -731,6 +793,12 @@ public partial class MainWindow : Window, IFrostSource
         {
             menu.Items.Add(new Separator());
             menu.Items.Add(Item(Vm.IsSaved(item) ? "In Your Library" : "Add to Library", () => Vm.SaveMusicItem(item), !Vm.IsSaved(item)));
+        }
+        // Only on Home: the picks are what it learns from.
+        if (Vm.IsHomeView)
+        {
+            menu.Items.Add(new Separator());
+            menu.Items.Add(Item("Not Interested", () => Vm.NotInterested(item)));
         }
     }
 
@@ -1115,27 +1183,24 @@ public partial class MainWindow : Window, IFrostSource
         Vm.SeekToLyric(line);
     }
     /// <summary>
-    /// The cinema lyrics fade out at the top and bottom edges of the view. A relative gradient would be
-    /// stretched over all the lyrics (the whole song's height), so the first and last lines sat in the fade;
-    /// this one is measured in pixels of what's on screen.
+    /// The lyrics fade out at the top and bottom edges of the view. A relative gradient would be stretched
+    /// over all the lyrics (the whole song's height), so the first and last lines sat in the fade; this one
+    /// is measured in pixels of what's on screen.
     /// </summary>
-    private void CinemaLyricsScroller_SizeChanged(object sender, SizeChangedEventArgs e)
+    private void LyricsScroller_SizeChanged(object sender, SizeChangedEventArgs e)
     {
+        if (sender is not ScrollViewer scroller) return;
         var h = e.NewSize.Height;
         if (h <= 0) return;
-        double top = Math.Min(56, h * 0.08), bottom = Math.Min(130, h * 0.16);
+        var cinema = scroller == CinemaLyricsScroller;
+        double top = Math.Min(cinema ? 56 : 28, h * 0.08), bottom = Math.Min(cinema ? 130 : 90, h * 0.16);
         var mask = new LinearGradientBrush { MappingMode = BrushMappingMode.Absolute, StartPoint = new Point(0, 0), EndPoint = new Point(0, h) };
         mask.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 0));
         mask.GradientStops.Add(new GradientStop(Colors.Black, top / h));
         mask.GradientStops.Add(new GradientStop(Colors.Black, 1 - bottom / h));
         mask.GradientStops.Add(new GradientStop(Color.FromArgb(0, 0, 0, 0), 1));
         mask.Freeze();
-        CinemaLyricsScroller.OpacityMask = mask;
-    }
-
-    private void LyricWord_Loaded(object sender, RoutedEventArgs e)
-    {
-        if (sender is TextBlock { DataContext: LyricWord word } tb) tb.Foreground = LyricsAnimator.NewWordBrush(word);
+        scroller.OpacityMask = mask;
     }
 
     // ---------------------------------------------------------------- cinema
@@ -1172,6 +1237,9 @@ public partial class MainWindow : Window, IFrostSource
             Root.Visibility = Visibility.Visible;
             Root.IsHitTestVisible = true;
             Cinema.IsHitTestVisible = false;
+            ScrollQueueToNowPlaying(); // skipped while cinema was up
+            _cinemaLyricsHidden = false;
+            CinemaLyricsPane.BeginAnimation(OpacityProperty, null);
             Root.BeginAnimation(OpacityProperty, new DoubleAnimation(1, d) { EasingFunction = ease });
             zoom.BeginAnimation(ScaleTransform.ScaleXProperty, new DoubleAnimation(1.03, d) { EasingFunction = ease });
             zoom.BeginAnimation(ScaleTransform.ScaleYProperty, new DoubleAnimation(1.03, d) { EasingFunction = ease });
@@ -1179,6 +1247,134 @@ public partial class MainWindow : Window, IFrostSource
             fade.Completed += (_, _) => { if (!Vm.IsCinema) Cinema.Visibility = Visibility.Collapsed; };
             Cinema.BeginAnimation(OpacityProperty, fade);
         }
+    }
+
+    // ---------------------------------------------------------------- Home's landing page
+
+    private bool _homeSnapping;
+
+    private void HomeScroller_ScrollChanged(object sender, ScrollChangedEventArgs e) => UpdateHomeHero();
+
+    /// <summary>
+    /// As Home scrolls, the landing page drifts up more slowly than the page (parallax), shrinks a little
+    /// and fades away; the page below fades in. The ring stops once it's out of sight.
+    /// </summary>
+    private void UpdateHomeHero()
+    {
+        var h = HomeHero.ActualHeight;
+        if (h <= 0) return;
+        var o = HomeScroller.VerticalOffset;
+        var t = Math.Clamp(o / (h * 0.7), 0, 1);
+        var gone = t * t * (3 - 2 * t);
+        HomeHero.Opacity = 1 - gone;
+        if (HomeHero.RenderTransform is not TranslateTransform { IsFrozen: false } drift)
+            HomeHero.RenderTransform = drift = new TranslateTransform();
+        drift.Y = Math.Min(o, h) * 0.45;
+        var b = Math.Clamp((o - h * 0.2) / (h * 0.6), 0, 1);
+        HomeBody.Opacity = 0.15 + 0.85 * b * b * (3 - 2 * b);
+        HomeRing.IsActive = HomeRingBig.IsActive = gone < 0.98 && WindowState != WindowState.Minimized;
+    }
+
+    /// <summary>
+    /// Between the landing page and the page below, one wheel notch glides all the way: down from the
+    /// landing, or back up from the top of the page.
+    /// </summary>
+    private void HomeSnap_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (!Vm.IsHomeView || e.OriginalSource is not DependencyObject src || !HomeScroller.IsAncestorOf(src)) return;
+        var h = HomeHero.ActualHeight;
+        var o = HomeScroller.VerticalOffset;
+        if (_homeSnapping)
+        {
+            e.Handled = true;
+            return;
+        }
+        if (e.Delta < 0 && o < h - 2) SnapHome(h);
+        else if (e.Delta > 0 && o > 0.5 && o <= h + 2) SnapHome(0);
+        else return;
+        e.Handled = true;
+    }
+
+    private void HeroHint_Click(object sender, RoutedEventArgs e) => SnapHome(HomeHero.ActualHeight);
+
+    private void SnapHome(double target)
+    {
+        target = Math.Clamp(target, 0, HomeScroller.ScrollableHeight);
+        SmoothScroll.Halt(HomeScroller);
+        _homeSnapping = true;
+        var glide = new DoubleAnimation(HomeScroller.VerticalOffset, target, TimeSpan.FromMilliseconds(720))
+        {
+            EasingFunction = new QuinticEase { EasingMode = EasingMode.EaseInOut },
+        };
+        glide.Completed += (_, _) =>
+        {
+            // Hand the view back to the wheel where it ended.
+            ScrollAnimator.SetOffset(HomeScroller, target);
+            HomeScroller.BeginAnimation(ScrollAnimator.OffsetProperty, null);
+            _homeSnapping = false;
+        };
+        HomeScroller.BeginAnimation(ScrollAnimator.OffsetProperty, glide);
+    }
+
+    // ---------------------------------------------------------------- cinema: changing songs
+
+    private Brush? _cinemaCoverShown;
+    private bool _cinemaLyricsHidden;
+
+    /// <summary>
+    /// The big cover swaps in place once the new one is ready; the old one stays on top and fades out, so
+    /// skipping cross-fades the artwork instead of cutting.
+    /// </summary>
+    private void CrossfadeCinemaCover()
+    {
+        var old = _cinemaCoverShown;
+        _cinemaCoverShown = CinemaCover.Background;
+        if (old == null || !Vm.IsCinema || ReferenceEquals(old, CinemaCover.Background)) return;
+        CinemaCoverOld.Background = old;
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(460)) { EasingFunction = new CubicEase { EasingMode = EasingMode.EaseInOut } };
+        fade.Completed += (_, _) => { if (CinemaCoverOld.Background == old) CinemaCoverOld.Background = null; };
+        CinemaCoverOld.BeginAnimation(OpacityProperty, fade);
+    }
+
+    /// <summary>
+    /// A new song in cinema: its title slides in, and the old song's lyrics step aside. The new lyrics are
+    /// built out of sight and rise into view once they're all there (see <see cref="RevealCinemaLyrics"/>),
+    /// instead of popping in a few lines at a time.
+    /// </summary>
+    private void CinemaSongChanged()
+    {
+        var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var d = TimeSpan.FromMilliseconds(420);
+        CinemaSongTitle.BeginAnimation(OpacityProperty, new DoubleAnimation(0.2, 1, d) { EasingFunction = ease });
+        if (CinemaSongTitle.RenderTransform is TranslateTransform { IsFrozen: false } slide)
+            slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(16, 0, d) { EasingFunction = ease });
+        else
+        {
+            CinemaSongTitle.RenderTransform = slide = new TranslateTransform();
+            slide.BeginAnimation(TranslateTransform.XProperty, new DoubleAnimation(16, 0, d) { EasingFunction = ease });
+        }
+
+        if (Vm.Lyrics.Count > 0 && !Vm.IsLyricsLoading) return; // the same song again (Repeat One): its lyrics stay
+        _cinemaLyricsHidden = true;
+        CinemaLyricsPane.BeginAnimation(OpacityProperty, new DoubleAnimation(0, TimeSpan.FromMilliseconds(140)));
+    }
+
+    /// <summary>The new song's lyrics are built (and scrolled to the line being sung): they rise into view.</summary>
+    private void RevealCinemaLyrics()
+    {
+        if (!_cinemaLyricsHidden) return;
+        // After layout, so the lines are built and in place before anything shows.
+        Dispatcher.BeginInvoke(() =>
+        {
+            if (!_cinemaLyricsHidden || Vm.IsLyricsLoading) return;
+            _cinemaLyricsHidden = false;
+            var ease = new CubicEase { EasingMode = EasingMode.EaseOut };
+            var d = TimeSpan.FromMilliseconds(520);
+            CinemaLyricsPane.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, d) { EasingFunction = ease });
+            if (CinemaLyricsPane.RenderTransform is not TranslateTransform { IsFrozen: false } rise)
+                CinemaLyricsPane.RenderTransform = rise = new TranslateTransform();
+            rise.BeginAnimation(TranslateTransform.YProperty, new DoubleAnimation(28, 0, d) { EasingFunction = ease });
+        }, DispatcherPriority.ContextIdle);
     }
 
     // ---------------------------------------------------------------- taskbar thumbnail buttons

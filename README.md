@@ -27,7 +27,12 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
   songs you haven't saved are grayed out; an album that can't be found on YouTube Music shows the songs
   you saved from it. The sidebar collapses to an icon strip.
 - **Cinema**: the whole window becomes the song, with a big cover, the title and controls, and huge
-  lyrics that fade into the background (Esc to leave).
+  lyrics that fade into the background (Esc to leave). Skipping cross-fades the cover and brings the new
+  song's lyrics in once they're ready.
+- **Home's landing page**: how many songs and hours you've listened to, around a ring that moves with the
+  music playing. Scroll (one notch) and it fades away into your mixes and picks.
+- **Not Interested**: right-click a song, or a mix, album, playlist or artist on Home, and it's kept out of
+  Home's recommendations (reset it in Settings).
 - **Background settings**: the album cover or your own colors (with presets), tint, brightness, and an
   optional slow motion with a frame-rate cap (5 to 120 FPS).
 - **Import playlist**: paste a public Spotify playlist, album or track link, or a YouTube video or
@@ -35,7 +40,7 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
 - **Your own playlists** with a title, description, author and cover picture. Right-click any song to
   add it to one. Imported playlists can be edited too (they become your own copy).
 - **Search** your library instantly, and all of YouTube Music as you type: songs, artists, albums and
-  playlists. Play any of them straight away.
+  playlists, including playlists made by the community. Play any of them straight away.
 - **YouTube Music browsing**, no account: artist pages (top songs, all songs, albums, singles & EPs,
   videos, live performances, playlists, "Fans might also like", and an endless **Mix**), album pages,
   playlists of any length, and **Explore** (new albums & singles, trending, charts, top artists, moods &
@@ -55,9 +60,18 @@ No account, no Premium, no ads, no skip limits, no telemetry, no obfuscated code
   keep repeating the same songs.
 - **Synced lyrics**, matched to the exact length of the audio playing: word-by-word timing from NetEase
   Cloud Music's public lyrics when available, otherwise line timing from [LRCLIB](https://lrclib.net).
-  Click a line to jump to it.
+  Apple Music-style: the sung line is bright, the others are blurred and dimmed by distance (clear while you
+  scroll), each line travels to its place on its own, and on word-timed lyrics each word fills in white
+  as it's sung, with a faint haze around the word being sung. Click a line to jump to it.
+- **Screen saver**: after 3 minutes untouched (30 s to never, in Settings) the panels are unloaded, memory is trimmed and a
+  sleepy "Z z z" clock shows, full screen when Yesify is the window in front. Any input wakes it.
 - **Miniplayer**: a small always-on-top window with a gradient taken from the album cover. Resize it
   freely: wide puts the cover on the left, tall puts it on top.
+- **Updates in the app**: each launch, Yesify checks GitHub for a newer release. If there is one, a full-window
+  update screen shows what's new, with **Install** or **Not now**. Installing takes you straight back to the
+  app while a ring in the sidebar fills up; Yesify then restarts on the new version (your library and settings
+  stay). Put off, it waits in the sidebar as **Update**, above Settings. Built from source, it compares the
+  commit you built with GitHub instead, and installing pulls and rebuilds.
 - **Closing the window (X) keeps the music playing** from the tray icon. While closed, the UI is
   unloaded and memory is trimmed. `Yesify.exe --tray` starts straight into the tray.
 - **Windows media controls**: the song, artist, cover and timeline show in the Windows media flyout and
@@ -100,6 +114,8 @@ dotnet publish -c Release -r win-x64 --self-contained true -p:PublishSingleFile=
 ```
 
 `Yesify.exe "some song"` or `Yesify.exe <link>` opens straight to that search or link.
+`Yesify.exe --simulate-update` shows the update screen with the latest release and goes through a whole install
+(real download and checksum) without replacing anything, to see the updater in action.
 
 ## Your data
 
@@ -130,6 +146,7 @@ in `%LOCALAPPDATA%\Yesify\cache`.
 | `Services/LyricsService.cs` | NetEase word-timed lyrics, LRCLIB fallback, LRC parsing |
 | `Services/LibraryService.cs` | Your playlists and the library search index |
 | `Services/LikedService.cs` | Local Liked Songs |
+| `Services/Updater.cs` | Checks GitHub for a newer release (or newer commits, for builds from source), downloads and verifies it against GitHub's SHA-256, and swaps it in |
 | `Services/DiscordPresence.cs` | Discord Rich Presence over Discord's local pipe (no SDK) |
 | `MediaSession.cs` | Windows media session (SystemMediaTransportControls) through plain COM calls |
 | `LyricsAnimator.cs` | The Apple Music-style word sweep and the dots during instrumental breaks |

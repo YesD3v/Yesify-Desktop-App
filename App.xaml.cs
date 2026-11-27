@@ -1,4 +1,4 @@
-using System.Runtime;
+﻿using System.Runtime;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Input;
@@ -44,6 +44,22 @@ public partial class App : Application
             return;
         }
 
+        // `--updated <pid>`: started by the updater, which is still saving and quitting. Wait for it to be
+        // gone (it holds the single-instance lock), then clear away the files it left behind.
+        var args = e.Args.ToList();
+        Updater.Simulate = args.Remove("--simulate-update");
+        var updatedFrom = args.IndexOf("--updated");
+        if (updatedFrom >= 0)
+        {
+            if (updatedFrom + 1 < args.Count && int.TryParse(args[updatedFrom + 1], out var pid))
+            {
+                try { using var old = System.Diagnostics.Process.GetProcessById(pid); old.WaitForExit(20_000); }
+                catch { /* already gone */ }
+                args.RemoveAt(updatedFrom + 1);
+            }
+            args.RemoveAt(updatedFrom);
+        }
+
         // One Yesify at a time: a second launch just brings the running one forward.
         _singleInstance = new Mutex(true, TrayIcon.InstanceName, out var isFirst);
         if (!isFirst)
@@ -81,11 +97,15 @@ public partial class App : Application
         SessionEnding += (_, _) => ExitApp();
 
         // `--tray` starts without a window (e.g. for autostart); the rest is a search or link to open.
-        var args = e.Args.ToList();
         var trayOnly = args.Remove("--tray");
         if (!trayOnly) ShowMainWindow();
         else AfterWindowClosed(); // same background mode as after closing the window
         StartMaintenance();
+
+        // A newer Yesify on GitHub? Checked once per launch; the update screen offers it.
+        _vm.RestartForUpdateRequested += ExitApp;
+        Task.Run(Updater.CleanUpAfterUpdate);
+        _ = _vm.CheckForUpdatesAsync();
 
         // `Yesify.exe <search or link>` opens straight to it.
         if (args.Count > 0)
@@ -223,7 +243,7 @@ public partial class App : Application
     }
 
     /// <summary>Returns freed memory to Windows: compact the GC heaps, then trim the working set.</summary>
-    private static void TrimMemory()
+    internal static void TrimMemory()
     {
         GCSettings.LargeObjectHeapCompactionMode = GCLargeObjectHeapCompactionMode.CompactOnce;
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
@@ -231,6 +251,9 @@ public partial class App : Application
         GC.Collect(GC.MaxGeneration, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         SetProcessWorkingSetSize(GetCurrentProcess(), -1, -1);
     }
+
+    /// <summary>Gives back pages the app isn't touching (no garbage collection): cheap enough to repeat.</summary>
+    internal static void TrimWorkingSet() => SetProcessWorkingSetSize(GetCurrentProcess(), -1, -1);
 
     [DllImport("kernel32.dll")] private static extern IntPtr GetCurrentProcess();
     [DllImport("kernel32.dll")] private static extern bool SetProcessWorkingSetSize(IntPtr process, nint min, nint max);

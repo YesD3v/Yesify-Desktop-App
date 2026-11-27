@@ -12,8 +12,11 @@ public sealed class BoolToVisibilityConverter : IValueConverter
 {
     public bool Invert { get; set; }
 
+    /// <summary>Hidden instead of collapsed: still laid out, so showing it again is instant (used for the side panel's tabs).</summary>
+    public bool KeepLayout { get; set; }
+
     public object Convert(object? value, Type t, object? p, CultureInfo c) =>
-        (value is true) ^ Invert ? Visibility.Visible : Visibility.Collapsed;
+        (value is true) ^ Invert ? Visibility.Visible : KeepLayout ? Visibility.Hidden : Visibility.Collapsed;
 
     public object ConvertBack(object? value, Type t, object? p, CultureInfo c) => throw new NotSupportedException();
 }

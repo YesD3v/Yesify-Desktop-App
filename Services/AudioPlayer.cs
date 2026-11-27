@@ -9,6 +9,7 @@ public sealed class AudioPlayer : IDisposable
     private WaveOutEvent? _output;
     private PreciseSeekReader? _reader;
     private VolumeSampleProvider? _volumeProvider;
+    private SpectrumTap? _tap;
     private float _volume = 0.8f;
 
     /// <summary>Raised on the UI thread when a track plays to the end.</summary>
@@ -137,7 +138,8 @@ public sealed class AudioPlayer : IDisposable
     {
         Stop();
         _reader = opened;
-        _volumeProvider = new VolumeSampleProvider(_reader.ToSampleProvider()) { Volume = Curve(_volume) };
+        _tap = new SpectrumTap(_reader.ToSampleProvider());
+        _volumeProvider = new VolumeSampleProvider(_tap) { Volume = Curve(_volume) };
         var reader = _reader;
         _counter = new OutputCounter(_volumeProvider, () => reader.CurrentTime);
         // Created on the UI thread, so PlaybackStopped is marshalled back to it.
@@ -178,6 +180,7 @@ public sealed class AudioPlayer : IDisposable
         _reader = null;
         _volumeProvider = null;
         _counter = null;
+        _tap = null;
         if (output != null) output.PlaybackStopped -= OnPlaybackStopped;
         if (output == null && reader == null) return;
         // Stopping the device waits for its playback thread, and the decoder can only go once it's stopped:
@@ -192,6 +195,85 @@ public sealed class AudioPlayer : IDisposable
             catch { /* the device is going away anyway */ }
             reader?.Dispose();
         });
+    }
+
+    /// <summary>
+    /// What's coming out of the speakers right now, as <paramref name="bands"/> levels from low to high
+    /// (0..1, log-spaced from 40 Hz to 16 kHz), for Home's visualizer. False when nothing is playing.
+    /// Measured before the volume, so it shows the music, not the volume knob.
+    /// </summary>
+    public bool ReadSpectrum(float[] bands)
+    {
+        if (_tap is not { } tap || _output is not { PlaybackState: PlaybackState.Playing } output) return false;
+        long played;
+        try { played = output.GetPosition() / output.OutputWaveFormat.BlockAlign; }
+        catch { return false; }
+        return tap.Read(played, bands);
+    }
+
+    /// <summary>
+    /// Keeps the last moment of decoded audio (mixed to mono) so the visualizer can look at exactly what the
+    /// speakers are playing: the decoder runs ahead of them by the output's buffers.
+    /// </summary>
+    private sealed class SpectrumTap(ISampleProvider source) : ISampleProvider
+    {
+        private const int Ring = 1 << 15; // frames; well over the output's 200 ms of buffers
+        private const int Fft = 2048, FftBits = 11;
+        private readonly float[] _ring = new float[Ring];
+        private long _written; // frames written since the song started
+        private readonly NAudio.Dsp.Complex[] _fft = new NAudio.Dsp.Complex[Fft];
+        private static readonly float[] Window = Enumerable.Range(0, Fft).Select(i => (float)(0.5 - 0.5 * Math.Cos(2 * Math.PI * i / (Fft - 1)))).ToArray();
+
+        public WaveFormat WaveFormat => source.WaveFormat;
+
+        public int Read(float[] buffer, int offset, int count)
+        {
+            var n = source.Read(buffer, offset, count);
+            var ch = WaveFormat.Channels;
+            var w = Interlocked.Read(ref _written);
+            for (var i = 0; i + ch <= n; i += ch)
+            {
+                float sum = 0;
+                for (var c = 0; c < ch; c++) sum += buffer[offset + i + c];
+                _ring[(int)(w++ & (Ring - 1))] = sum / ch;
+            }
+            Interlocked.Exchange(ref _written, w);
+            return n;
+        }
+
+        /// <summary>The spectrum of the <see cref="Fft"/> frames that end at frame <paramref name="audible"/>.</summary>
+        public bool Read(long audible, float[] bands)
+        {
+            var written = Interlocked.Read(ref _written);
+            var end = Math.Min(audible, written);
+            if (end < Fft || written - end > Ring - Fft) return false;
+            for (var i = 0; i < Fft; i++)
+            {
+                _fft[i].X = _ring[(int)((end - Fft + i) & (Ring - 1))] * Window[i];
+                _fft[i].Y = 0;
+            }
+            NAudio.Dsp.FastFourierTransform.FFT(true, FftBits, _fft);
+
+            var rate = WaveFormat.SampleRate;
+            double lo = 40, hi = Math.Min(16000, rate / 2.0);
+            for (var b = 0; b < bands.Length; b++)
+            {
+                // Each band spans an equal step on a log scale, at least one FFT bin wide.
+                var f0 = lo * Math.Pow(hi / lo, b / (double)bands.Length);
+                var f1 = lo * Math.Pow(hi / lo, (b + 1) / (double)bands.Length);
+                var i0 = Math.Max(1, (int)(f0 * Fft / rate));
+                var i1 = Math.Max(i0 + 1, (int)(f1 * Fft / rate));
+                double peak = 0;
+                for (var i = i0; i < i1 && i < Fft / 2; i++)
+                    peak = Math.Max(peak, Math.Sqrt(_fft[i].X * _fft[i].X + _fft[i].Y * _fft[i].Y));
+                // NAudio's forward FFT divides by N; a full-scale sine peaks near 0.25 after the Hann window.
+                var db = 20 * Math.Log10(peak * 4 + 1e-9);
+                // Highs carry less energy: tilt so the ring isn't all bass.
+                db += 3.0 * b / bands.Length * 4;
+                bands[b] = (float)Math.Clamp((db + 62) / 54, 0, 1);
+            }
+            return true;
+        }
     }
 
     /// <summary>On exit: stop right away, so nothing keeps playing while the app closes.</summary>

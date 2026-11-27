@@ -419,7 +419,7 @@
             </Grid.RowDefinitions>
 
             <!-- ============================================================ title bar -->
-            <Grid Grid.Row="0">
+            <Grid x:Name="TitleBar" Grid.Row="0">
                 <!-- The Yesify mark, centered over the sidebar's icons (they sit 40 px in). A vector traced from the
                      logo, so it's sharp at any size and screen scale. -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="30,0,0,0">
@@ -499,13 +499,52 @@
                             </Button>
                         </StackPanel>
 
-                        <Button Grid.Row="3" Style="{StaticResource SideNavButton}" Command="{Binding OpenSettingsCommand}" Tag="{Binding IsSettingsView}" Margin="0,8,0,0" ToolTip="Settings">
-                            <StackPanel Orientation="Horizontal">
-                                <local:Icon Glyph="&#xE713;" FontSize="16" VerticalAlignment="Center" Width="18" Margin="0,0,10,0" />
-                                <TextBlock Text="Settings" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
-                                           Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
-                            </StackPanel>
-                        </Button>
+                        <StackPanel Grid.Row="3" Margin="0,8,0,0">
+                            <!-- an update that was put off ("Not now"): one click brings its screen back -->
+                            <Button x:Name="UpdateNavButton" Style="{StaticResource SideNavButton}" Command="{Binding ShowUpdateCommand}" ToolTip="{Binding UpdateButtonTip}"
+                                    Visibility="{Binding ShowUpdateButton, Converter={StaticResource BoolToVis}}" Margin="0,0,0,2" Padding="8,5">
+                                <!-- 4 px less padding and a 26 px icon box: the icon lines up with the tabs' 18 px ones, and the ring
+                                     has room without spilling out (it would be cut square in the collapsed sidebar) -->
+                                <StackPanel Orientation="Horizontal">
+                                    <Grid Width="26" Height="26" Margin="0,0,6,0" VerticalAlignment="Center">
+                                        <!-- installing: the arrow shrinks into a ring that fills up in white (spins when there's no telling how far) -->
+                                        <local:ProgressRing Thickness="2.6" Value="{Binding UpdateRingValue}"
+                                                            Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}" />
+                                        <Path Stretch="Uniform" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                                              Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                              Data="M12,3.5 V15 M7,10.5 L12,15.5 L17,10.5 M4.5,20 H19.5">
+                                            <Path.Style>
+                                                <Style TargetType="Path">
+                                                    <Setter Property="Width" Value="16" />
+                                                    <Setter Property="Height" Value="16" />
+                                                    <Setter Property="StrokeThickness" Value="2.2" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding IsUpdating}" Value="True">
+                                                            <Setter Property="Width" Value="10" />
+                                                            <Setter Property="Height" Value="10" />
+                                                            <Setter Property="StrokeThickness" Value="2.4" />
+                                                            <Setter Property="Stroke" Value="White" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </Path.Style>
+                                        </Path>
+                                        <!-- waiting to be installed: a small white dot -->
+                                        <Ellipse Width="6" Height="6" Fill="White" HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,3,2,0"
+                                                 Visibility="{Binding ShowUpdateOffer, Converter={StaticResource BoolToVis}}" />
+                                    </Grid>
+                                    <TextBlock Text="{Binding UpdateNavText}" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                               Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
+                                </StackPanel>
+                            </Button>
+                            <Button Style="{StaticResource SideNavButton}" Command="{Binding OpenSettingsCommand}" Tag="{Binding IsSettingsView}" ToolTip="Settings">
+                                <StackPanel Orientation="Horizontal">
+                                    <local:Icon Glyph="&#xE713;" FontSize="16" VerticalAlignment="Center" Width="18" Margin="0,0,10,0" />
+                                    <TextBlock Text="Settings" Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}"
+                                               Opacity="{Binding SidebarWidth, RelativeSource={RelativeSource AncestorType=Window}, Converter={StaticResource SidebarLabelOpacity}}" />
+                                </StackPanel>
+                            </Button>
+                        </StackPanel>
                     </Grid>
                 </Border>
 
@@ -522,8 +561,71 @@
                     </Grid.RowDefinitions>
 
                     <!-- Home: rows of mixes, songs, releases and artists picked from what you play -->
-                    <ScrollViewer x:Name="HomeScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding IsHomeView, Converter={StaticResource BoolToVis}}">
-                        <StackPanel Margin="32,28,20,24">
+                    <ScrollViewer x:Name="HomeScroller" Grid.RowSpan="2" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding IsHomeView, Converter={StaticResource BoolToVis}}"
+                                  ScrollChanged="HomeScroller_ScrollChanged">
+                        <StackPanel>
+                        <!-- Landing: your listening in numbers around a ring that moves with the music. Scrolling
+                             fades it away into the page below (MainWindow.UpdateHomeHero); one wheel notch glides
+                             all the way down or back up. -->
+                        <Grid x:Name="HomeHero" Height="{Binding ViewportHeight, ElementName=HomeScroller}" MinHeight="460">
+                            <Grid.RenderTransform>
+                                <TranslateTransform />
+                            </Grid.RenderTransform>
+                            <StackPanel VerticalAlignment="Center" HorizontalAlignment="Center" Margin="24,0,24,48">
+                                <Grid Width="340" Height="340" HorizontalAlignment="Center">
+                                    <!-- the big, soft one behind everything: spills past this box (negative margin, no clip) -->
+                                    <local:AudioRing x:Name="HomeRingBig" Soft="True" InnerRadius="215" Margin="-330" Opacity="0.42" />
+                                    <local:AudioRing x:Name="HomeRing" InnerRadius="88" PulseElement="{Binding ElementName=HeroDisc}" />
+                                    <!-- Cached here, with the shadow on the grid inside: the shadow is then part of the cached
+                                         picture. (An effect on the cached element itself is redrawn every frame the ring moves.) -->
+                                    <Grid x:Name="HeroDisc" Width="176" Height="176">
+                                        <Grid.CacheMode>
+                                            <BitmapCache EnableClearType="False" RenderAtScale="2" />
+                                        </Grid.CacheMode>
+                                        <Grid>
+                                            <Grid.Effect>
+                                                <DropShadowEffect BlurRadius="44" ShadowDepth="10" Opacity="0.45" RenderingBias="Performance" />
+                                            </Grid.Effect>
+                                            <Border CornerRadius="88" Background="{DynamicResource GlassChipBrush}">
+                                                <TextBlock Text="&#xE8D6;" FontFamily="{StaticResource IconFont}" FontSize="56" Foreground="{DynamicResource FaintTextBrush}"
+                                                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                            </Border>
+                                            <Border CornerRadius="88" local:AsyncImage.BackgroundUrl="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="352" />
+                                            <Border CornerRadius="88" BorderThickness="1.5" BorderBrush="{DynamicResource PanelBorderBrush}" />
+                                        </Grid>
+                                    </Grid>
+                                </Grid>
+                                <!-- the numbers, kept as one picture with their glow baked in (the ring moves behind them) -->
+                                <StackPanel>
+                                <StackPanel.CacheMode>
+                                    <BitmapCache EnableClearType="False" RenderAtScale="2" />
+                                </StackPanel.CacheMode>
+                                <TextBlock Text="You&apos;ve listened to" FontSize="16" FontWeight="SemiBold" Foreground="{DynamicResource SubtleTextBrush}"
+                                           HorizontalAlignment="Center" Margin="0,22,0,0"
+                                           Visibility="{Binding HasListeningStats, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Style="{StaticResource GlassText}" Text="{Binding StatsSongsText}" FontSize="64" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI"
+                                           HorizontalAlignment="Center" Margin="0,2,0,0"
+                                           Visibility="{Binding HasListeningStats, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Style="{StaticResource GlassText}" Text="{Binding StatsHoursText}" FontSize="30" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI"
+                                           HorizontalAlignment="Center" Margin="0,-4,0,0"
+                                           Visibility="{Binding HasListeningStats, Converter={StaticResource BoolToVis}}" />
+                                <TextBlock Style="{StaticResource GlassText}" Text="{Binding Greeting}" FontSize="52" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI"
+                                           HorizontalAlignment="Center" Margin="0,22,0,0"
+                                           Visibility="{Binding HasListeningStats, Converter={StaticResource InvBoolToVis}}" />
+                                <TextBlock Text="{Binding StatsDetail}" FontSize="13" Foreground="{DynamicResource SubtleTextBrush}" HorizontalAlignment="Center"
+                                           TextAlignment="Center" TextWrapping="Wrap" MaxWidth="560" Margin="0,14,0,0" />
+                                </StackPanel>
+                            </StackPanel>
+                            <!-- down to the picks -->
+                            <Button x:Name="HeroHint" Style="{StaticResource PillButton}" Background="{DynamicResource GlassChipBrush}" Height="34" Padding="14,0,12,0" FontSize="12.5"
+                                    VerticalAlignment="Bottom" HorizontalAlignment="Center" Margin="0,0,0,26" Click="HeroHint_Click" ToolTip="Scroll down for your mixes and picks">
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="Your picks" VerticalAlignment="Center" />
+                                    <TextBlock Text="&#xE70D;" FontFamily="{StaticResource IconFont}" FontSize="12" Margin="8,1,0,0" VerticalAlignment="Center" />
+                                </StackPanel>
+                            </Button>
+                        </Grid>
+                        <StackPanel x:Name="HomeBody" Margin="32,28,20,24">
                             <Grid>
                                 <TextBlock Text="{Binding Greeting}" FontSize="40" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" />
                                 <!-- New picks: the arrows turn while Home is being rebuilt, then ease to a stop -->
@@ -583,6 +685,7 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                             <ItemsControl x:Name="HomeSectionsList" ItemsSource="{Binding HomeSections}" ItemTemplate="{StaticResource SectionTemplate}" />
+                        </StackPanel>
                         </StackPanel>
                     </ScrollViewer>
 
@@ -771,6 +874,21 @@
                         <StackPanel Margin="32,28,32,32" MaxWidth="760" HorizontalAlignment="Left">
                             <TextBlock Text="Settings" FontSize="40" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" />
                             <TextBlock Text="Integrations, storage and what Yesify remembers" FontSize="14" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,6,0,0" />
+
+                            <TextBlock Text="Screen saver" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource SubtleTextBrush}" Margin="4,30,0,10" />
+                            <Border CornerRadius="16" Background="{DynamicResource GlassChipBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
+                                <Grid Margin="20,16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="230" />
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="72" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Start after" FontSize="14" FontWeight="Bold" VerticalAlignment="Center" />
+                                    <Slider Grid.Column="1" Style="{StaticResource ThinSlider}" Minimum="0" Maximum="{Binding IdleStepMax, Mode=OneTime}" Value="{Binding IdleStep}"
+                                            IsSnapToTickEnabled="True" TickFrequency="1" SmallChange="1" LargeChange="1" local:SliderDrag.WheelStep="1" VerticalAlignment="Center" />
+                                    <TextBlock Grid.Column="2" Text="{Binding IdleText}" FontSize="14" FontWeight="Bold" VerticalAlignment="Center" TextAlignment="Right" />
+                                </Grid>
+                            </Border>
 
                             <TextBlock Text="Integrations" FontSize="15" FontWeight="Bold" Foreground="{DynamicResource SubtleTextBrush}" Margin="4,30,0,10" />
                             <Border CornerRadius="16" Background="{DynamicResource GlassChipBrush}" BorderBrush="{DynamicResource PanelBorderBrush}" BorderThickness="1">
@@ -1029,6 +1147,19 @@
                                     </StackPanel>
                                     <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Clear" Height="34" Padding="18,0" Background="{DynamicResource GlassChipBrush}" VerticalAlignment="Center" Command="{Binding ClearListeningHistoryCommand}" />
                                 </Grid>
+                                <Border Height="1" Background="{DynamicResource DividerBrush}" Margin="20,0" />
+                                <Grid Margin="20,16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
+                                        <TextBlock Text="Not interested" FontSize="14" FontWeight="Bold" />
+                                        <TextBlock Text="{Binding NotInterestedSummary}" FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Style="{StaticResource PillButton}" Content="Reset" Height="34" Padding="18,0" Background="{DynamicResource GlassChipBrush}" VerticalAlignment="Center"
+                                            Command="{Binding ClearNotInterestedCommand}" IsEnabled="{Binding HasNotInterested}" />
+                                </Grid>
                                 </StackPanel>
                             </Border>
 
@@ -1042,7 +1173,14 @@
                                     </Grid.ColumnDefinitions>
                                     <StackPanel VerticalAlignment="Center" Margin="0,0,24,0">
                                         <TextBlock Text="Yesify" FontSize="14" FontWeight="Bold" />
-                                        <TextBlock Text="Playlists from Spotify&apos;s public pages, audio from YouTube, lyrics from LRCLIB. No account, no ads, unlimited skips." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                        <TextBlock Text="A native music player for Windows. No account, no ads, unlimited skips, and nothing you play leaves this PC." FontSize="12.5" LineHeight="18" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,3,0,0" TextWrapping="Wrap" />
+                                        <TextBlock FontSize="12.5" LineHeight="19" Foreground="{DynamicResource SubtleTextBrush}" Margin="0,10,0,0" TextWrapping="Wrap">
+                                            <Run Text="Music and browsing" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" /><Run Text=": YouTube Music (search, artists, albums, playlists, community playlists, Explore) and Spotify&apos;s public pages (playlists, albums, artists, Home&apos;s recommendations)." />
+                                            <LineBreak />
+                                            <Run Text="Audio" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" /><Run Text=": YouTube, matched to the exact song (explicit or clean, the right length)." />
+                                            <LineBreak />
+                                            <Run Text="Lyrics" FontWeight="SemiBold" Foreground="{DynamicResource TextBrush}" /><Run Text=": NetEase Cloud Music (word-by-word timing) and LRCLIB (line timing), matched to the length of the audio playing." />
+                                        </TextBlock>
                                     </StackPanel>
                                     
                                 </Grid>
@@ -1155,17 +1293,19 @@
                                 </local:Icon.Effect>
                             </local:Icon>
                                     </Border>
-                                    <Border Width="176" Height="176" CornerRadius="12" Margin="0,0,24,0" ClipToBounds="True"
-                                            Visibility="{Binding ViewImageUrl, Converter={StaticResource NullToVis}}">
-                                        <Border.Effect>
-                                            <DropShadowEffect BlurRadius="30" ShadowDepth="6" Opacity="0.5" />
-                                        </Border.Effect>
-                                        <!-- the shadow is drawn once and reused while the page scrolls -->
-                                        <Border.CacheMode>
+                                    <!-- the shadow is drawn once and reused while the page scrolls: it's on the border inside the
+                                         cached grid (an effect on the cached element itself would be redrawn every frame) -->
+                                    <Grid Width="176" Height="176" Margin="0,0,24,0" Visibility="{Binding ViewImageUrl, Converter={StaticResource NullToVis}}">
+                                        <Grid.CacheMode>
                                             <BitmapCache EnableClearType="False" />
-                                        </Border.CacheMode>
-                                        <Image local:AsyncImage.Url="{Binding ViewImageUrl}" local:AsyncImage.Width="360" Stretch="UniformToFill" />
-                                    </Border>
+                                        </Grid.CacheMode>
+                                        <Border CornerRadius="12" ClipToBounds="True">
+                                            <Border.Effect>
+                                                <DropShadowEffect BlurRadius="30" ShadowDepth="6" Opacity="0.5" />
+                                            </Border.Effect>
+                                            <Image local:AsyncImage.Url="{Binding ViewImageUrl}" local:AsyncImage.Width="360" Stretch="UniformToFill" />
+                                        </Border>
+                                    </Grid>
                                     <StackPanel Grid.Column="1" VerticalAlignment="Bottom">
                                         <TextBlock FontSize="44" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" TextTrimming="CharacterEllipsis"
                                                    Visibility="{Binding ViewTitle, Converter={StaticResource NullToVis}}">
@@ -1397,11 +1537,12 @@
                         <Border Height="8" />
 
                         <!-- lyrics -->
-                        <Grid x:Name="LyricsPane" Grid.Row="1" Visibility="{Binding ShowLyrics, Converter={StaticResource BoolToVis}}">
-                            <TextBlock Text="{Binding LyricsStatus}" Foreground="{DynamicResource SubtleTextBrush}" Margin="20,8" TextWrapping="Wrap" />
-                            <local:LoadingDots DotSize="9" Fill="{DynamicResource SubtleTextBrush}" Margin="24,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
-                                               ToolTip="Loading lyrics" Visibility="{Binding IsLyricsLoading, Converter={StaticResource BoolToVis}}" />
-                            <ScrollViewer x:Name="LyricsScroller" VerticalScrollBarVisibility="Hidden">
+                        <Grid x:Name="LyricsPane" Grid.Row="1" Visibility="{Binding ShowLyrics, Converter={StaticResource BoolToHidden}}">
+                            <TextBlock x:Name="LyricsStatusText" Text="{Binding LyricsStatus}" Foreground="{DynamicResource SubtleTextBrush}" Margin="20,8" TextWrapping="Wrap" />
+                            <!-- shown and hidden by MainWindow.UpdateLyricsLoading: fades out before the lyrics come in -->
+                            <local:LoadingDots x:Name="LyricsLoadingDots" DotSize="9" Fill="{DynamicResource SubtleTextBrush}" Margin="24,16,0,0" HorizontalAlignment="Left" VerticalAlignment="Top"
+                                               ToolTip="Loading lyrics" Visibility="Collapsed" />
+                            <ScrollViewer x:Name="LyricsScroller" VerticalScrollBarVisibility="Hidden" SizeChanged="LyricsScroller_SizeChanged">
                                 <!-- note: scrolled by LyricsAnimator with an eased animation -->
                                 <!-- Each line is its words (lit by a gradient sweep, see LyricsAnimator) or, for an
                                      instrumental break, three dots that fill up. -->
@@ -1423,7 +1564,7 @@
                                                         </ItemsControl.ItemsPanel>
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                                <TextBlock Text="{Binding Text}" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                                <local:LyricWordView FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
@@ -1435,7 +1576,7 @@
                                                         </ItemsControl.ItemsPanel>
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                                <TextBlock Text="{Binding Text}" FontSize="27" FontWeight="ExtraBold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                                <local:LyricWordView FontSize="27" FontWeight="ExtraBold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
@@ -1449,7 +1590,7 @@
                                                         </ItemsControl.ItemsPanel>
                                                         <ItemsControl.ItemTemplate>
                                                             <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                                <TextBlock Text="{Binding Text}" FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                                <local:LyricWordView FontSize="18" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                             </DataTemplate>
                                                         </ItemsControl.ItemTemplate>
                                                     </ItemsControl>
@@ -1471,7 +1612,7 @@
                         </Grid>
 
                         <!-- queue -->
-                        <ScrollViewer x:Name="QueueScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding ShowQueue, Converter={StaticResource BoolToVis}}">
+                        <ScrollViewer x:Name="QueueScroller" Grid.Row="1" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True" Visibility="{Binding ShowQueue, Converter={StaticResource BoolToHidden}}">
                             <StackPanel x:Name="QueueContent" Margin="10,0,10,16">
                                 <!-- Recently played sits above Now playing: scroll up to see it. -->
                                 <StackPanel x:Name="HistorySection" Visibility="{Binding HistoryView.Count, Converter={StaticResource CountToVis}}">
@@ -1701,10 +1842,17 @@
                             <Border.Effect>
                                 <DropShadowEffect BlurRadius="60" ShadowDepth="14" Opacity="0.55" />
                             </Border.Effect>
-                            <Border CornerRadius="18" local:AsyncImage.SwapInPlace="True" local:AsyncImage.BackgroundUrl="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="840" />
+                            <Grid>
+                                <Border x:Name="CinemaCover" CornerRadius="18" local:AsyncImage.SwapInPlace="True" local:AsyncImage.BackgroundUrl="{Binding CurrentTrack.ImageUrl}" local:AsyncImage.Width="840" />
+                                <!-- the previous cover, fading out over the new one (MainWindow.CrossfadeCinemaCover) -->
+                                <Border x:Name="CinemaCoverOld" CornerRadius="18" IsHitTestVisible="False" Opacity="0" />
+                            </Grid>
                         </Border>
                         <Grid Margin="0,26,0,0">
-                            <StackPanel Margin="0,0,48,0">
+                            <StackPanel x:Name="CinemaSongTitle" Margin="0,0,48,0">
+                                <StackPanel.RenderTransform>
+                                    <TranslateTransform />
+                                </StackPanel.RenderTransform>
                                 <DockPanel HorizontalAlignment="Left">
                                     <!-- explicit mark, scaled to the big title -->
                                     <Path DockPanel.Dock="Right" Style="{StaticResource ExplicitMark}" Margin="9,2,0,0"
@@ -1767,10 +1915,13 @@
                 </Viewbox>
 
                 <!-- the lyrics: big, left-aligned, fading out toward the top and bottom edges -->
-                <Grid Grid.Column="1">
+                <Grid x:Name="CinemaLyricsPane" Grid.Column="1">
+                    <Grid.RenderTransform>
+                        <TranslateTransform />
+                    </Grid.RenderTransform>
                     <TextBlock Text="{Binding LyricsStatus}" FontSize="22" Foreground="{DynamicResource SubtleTextBrush}" VerticalAlignment="Center" TextWrapping="Wrap" />
                     <!-- edge fade: set by MainWindow (FadeCinemaLyricsEdges), sized to what's visible, not to all the lyrics -->
-                    <ScrollViewer x:Name="CinemaLyricsScroller" VerticalScrollBarVisibility="Hidden" SizeChanged="CinemaLyricsScroller_SizeChanged">
+                    <ScrollViewer x:Name="CinemaLyricsScroller" VerticalScrollBarVisibility="Hidden" SizeChanged="LyricsScroller_SizeChanged">
                         <ItemsControl x:Name="CinemaLyricsList" ItemsSource="{Binding Lyrics}" Margin="0,320,24,420"
                                       TextOptions.TextFormattingMode="Ideal" TextOptions.TextHintingMode="Animated" TextOptions.TextRenderingMode="Grayscale">
                             <ItemsControl.ItemTemplate>
@@ -1789,7 +1940,7 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                        <TextBlock Text="{Binding Text}" FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                        <local:LyricWordView FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -1801,7 +1952,7 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                        <TextBlock Text="{Binding Text}" FontSize="40" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                        <local:LyricWordView FontSize="40" FontWeight="ExtraBold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -1815,7 +1966,7 @@
                                                 </ItemsControl.ItemsPanel>
                                                 <ItemsControl.ItemTemplate>
                                                     <DataTemplate DataType="{x:Type m:LyricWord}">
-                                                        <TextBlock Text="{Binding Text}" FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Loaded="LyricWord_Loaded" />
+                                                        <local:LyricWordView FontSize="25" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" />
                                                     </DataTemplate>
                                                 </ItemsControl.ItemTemplate>
                                             </ItemsControl>
@@ -1958,5 +2109,178 @@
             </Grid>
         </Grid>
 
+        <!-- ============================================================ update screen
+             A newer Yesify on GitHub (checked at launch): like the idle screen, the app fades away and the offer sits
+             over the artwork backdrop. "Not now" brings the app back with an Update button over Settings.
+             See MainWindow.Update.cs and Services/Updater.cs. -->
+        <Grid x:Name="UpdateScreen" Visibility="Collapsed" Opacity="0">
+            <!-- the title bar stays usable through the shade (nothing here takes clicks above the content) -->
+            <Rectangle IsHitTestVisible="False">
+                <Rectangle.Fill>
+                    <RadialGradientBrush Center="0.5,0.45" GradientOrigin="0.5,0.45" RadiusX="0.85" RadiusY="0.85">
+                        <GradientStop Color="#59000000" Offset="0" />
+                        <GradientStop Color="#B8000000" Offset="1" />
+                    </RadialGradientBrush>
+                </Rectangle.Fill>
+            </Rectangle>
+            <ScrollViewer x:Name="UpdateScroller" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,46,0,0" Background="Transparent">
+            <Grid MinHeight="{Binding ViewportHeight, ElementName=UpdateScroller}">
+            <StackPanel x:Name="UpdateContent" Width="560" HorizontalAlignment="Center" VerticalAlignment="Center" Margin="24,0,24,46">
+                <StackPanel.RenderTransform>
+                    <TranslateTransform />
+                </StackPanel.RenderTransform>
+
+                <!-- the mark: a glass disc with a download arrow, and a ring that breathes out of it -->
+                <Grid Width="96" Height="96" HorizontalAlignment="Center">
+                    <Ellipse x:Name="UpdatePulse" Stroke="#80FFFFFF" StrokeThickness="1.5" RenderTransformOrigin="0.5,0.5" Opacity="0">
+                        <Ellipse.RenderTransform>
+                            <ScaleTransform />
+                        </Ellipse.RenderTransform>
+                    </Ellipse>
+                    <Ellipse Stroke="#40FFFFFF" StrokeThickness="1">
+                        <Ellipse.Fill>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                <GradientStop Color="#40FFFFFF" Offset="0" />
+                                <GradientStop Color="#10FFFFFF" Offset="1" />
+                            </LinearGradientBrush>
+                        </Ellipse.Fill>
+                        <Ellipse.Effect>
+                            <DropShadowEffect BlurRadius="40" ShadowDepth="0" Color="White" Opacity="0.18" />
+                        </Ellipse.Effect>
+                    </Ellipse>
+                    <Path Width="38" Height="38" Stretch="Uniform" Stroke="White" StrokeThickness="2.4" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
+                          Data="M12,3.5 V15 M7,10.5 L12,15.5 L17,10.5 M4.5,20 H19.5" />
+                </Grid>
+
+                <TextBlock Text="UPDATE AVAILABLE" FontSize="12" FontWeight="Bold" Foreground="#A6FFFFFF" HorizontalAlignment="Center"
+                           Margin="0,22,0,0" />
+                <TextBlock Text="{Binding AvailableUpdate.Title}" FontSize="46" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" Foreground="White"
+                           HorizontalAlignment="Center" TextAlignment="Center" TextWrapping="Wrap" Margin="0,8,0,0" />
+                <TextBlock Text="{Binding AvailableUpdate.Tagline}" FontSize="18" Foreground="#D9FFFFFF" HorizontalAlignment="Center" TextAlignment="Center"
+                           TextWrapping="Wrap" Margin="0,4,0,0" Visibility="{Binding AvailableUpdate.Tagline, Converter={StaticResource NullToVis}}" />
+
+                <ItemsControl ItemsSource="{Binding UpdateChips}" HorizontalAlignment="Center" Margin="0,18,0,0" Focusable="False">
+                    <ItemsControl.ItemsPanel>
+                        <ItemsPanelTemplate>
+                            <StackPanel Orientation="Horizontal" />
+                        </ItemsPanelTemplate>
+                    </ItemsControl.ItemsPanel>
+                    <ItemsControl.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="#1AFFFFFF" BorderBrush="#26FFFFFF" BorderThickness="1" CornerRadius="9" Padding="10,4" Margin="4,0">
+                                <TextBlock Text="{Binding}" FontSize="12.5" Foreground="#D9FFFFFF" />
+                            </Border>
+                        </DataTemplate>
+                    </ItemsControl.ItemTemplate>
+                </ItemsControl>
+
+                <!-- what's new -->
+                <Border CornerRadius="16" BorderBrush="#26FFFFFF" BorderThickness="1" Margin="0,24,0,0" ClipToBounds="True">
+                    <Border.Background>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#1FFFFFFF" Offset="0" />
+                            <GradientStop Color="#0DFFFFFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </Border.Background>
+                    <Grid>
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto" />
+                            <RowDefinition Height="*" />
+                        </Grid.RowDefinitions>
+                        <TextBlock Text="What's new" FontSize="15" FontWeight="Bold" Foreground="White" Margin="22,18,22,6" />
+                        <ScrollViewer x:Name="UpdateNotesScroller" Grid.Row="1" MaxHeight="210" VerticalScrollBarVisibility="Auto" local:SmoothScroll.IsEnabled="True">
+                            <!-- the notes fade out at the bottom edge instead of being cut off -->
+                            <ScrollViewer.OpacityMask>
+                                <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                                    <GradientStop Color="Black" Offset="0" />
+                                    <GradientStop Color="Black" Offset="0.88" />
+                                    <GradientStop Color="Transparent" Offset="1" />
+                                </LinearGradientBrush>
+                            </ScrollViewer.OpacityMask>
+                            <StackPanel x:Name="UpdateNotes" Margin="22,0,22,18" />
+                        </ScrollViewer>
+                    </Grid>
+                </Border>
+
+                <!-- choose -->
+                <StackPanel Margin="0,22,0,0" Visibility="{Binding ShowUpdateOffer, Converter={StaticResource BoolToVis}}">
+                    <TextBlock Text="{Binding UpdateError}" Foreground="#FFFF9A8A" FontSize="13" TextWrapping="Wrap" TextAlignment="Center"
+                               HorizontalAlignment="Center" Margin="0,0,0,14" Visibility="{Binding UpdateError, Converter={StaticResource NullToVis}}" />
+                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                        <Button Style="{StaticResource PillButton}" Content="Not now" Command="{Binding DismissUpdateCommand}" Background="#1FFFFFFF"
+                                Foreground="White" FontSize="14" Padding="24,11" MinWidth="130" Margin="0,0,12,0" />
+                        <Button Style="{StaticResource AccentPillButton}" Command="{Binding InstallUpdateCommand}" FontSize="14" Padding="24,11" MinWidth="170">
+                            <StackPanel Orientation="Horizontal">
+                                <Path Width="13" Height="13" Stretch="Uniform" Stroke="#FF0A0A0C" StrokeThickness="2.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round"
+                                      StrokeLineJoin="Round" VerticalAlignment="Center" Margin="0,0,9,0" Data="M12,3.5 V15 M7,10.5 L12,15.5 L17,10.5 M4.5,20 H19.5" />
+                                <TextBlock Text="{Binding UpdateActionText}" FontWeight="Bold" />
+                            </StackPanel>
+                        </Button>
+                    </StackPanel>
+                    <TextBlock Text="Your library, playlists and settings stay as they are." FontSize="12" Foreground="#80FFFFFF"
+                               HorizontalAlignment="Center" Margin="0,16,0,0" />
+                </StackPanel>
+
+                <!-- installing -->
+                <StackPanel Margin="0,30,0,0" Visibility="{Binding IsUpdating, Converter={StaticResource BoolToVis}}">
+                    <Grid>
+                        <TextBlock Text="{Binding UpdateStage}" FontSize="15" FontWeight="Bold" Foreground="White" />
+                        <TextBlock x:Name="UpdatePercent" FontSize="15" FontWeight="Bold" Foreground="White" HorizontalAlignment="Right" />
+                    </Grid>
+                    <Grid x:Name="UpdateTrack" Height="6" Margin="0,12,0,0" ClipToBounds="True">
+                        <Border Background="#24FFFFFF" CornerRadius="3" />
+                        <Border x:Name="UpdateBar" Background="White" CornerRadius="3" HorizontalAlignment="Left" Width="0">
+                            <Border.Effect>
+                                <DropShadowEffect BlurRadius="12" ShadowDepth="0" Color="White" Opacity="0.55" />
+                            </Border.Effect>
+                            <Border.RenderTransform>
+                                <TranslateTransform />
+                            </Border.RenderTransform>
+                        </Border>
+                    </Grid>
+                    <Grid Margin="0,10,0,0">
+                        <TextBlock Text="{Binding UpdateDetail}" FontSize="12.5" Foreground="#A6FFFFFF" TextTrimming="CharacterEllipsis" Margin="0,0,170,0" VerticalAlignment="Center" />
+                        <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                            <Button Style="{StaticResource PillButton}" Content="Cancel" Command="{Binding CancelUpdateCommand}" Background="#1FFFFFFF" Foreground="White"
+                                    Padding="16,6" Margin="0,0,8,0" Visibility="{Binding CanCancelUpdate, Converter={StaticResource BoolToVis}}" />
+                            <Button Style="{StaticResource PillButton}" Content="Hide" Command="{Binding DismissUpdateCommand}" Background="#1FFFFFFF" Foreground="White"
+                                    Padding="16,6" ToolTip="Back to Yesify: the update carries on in the sidebar" />
+                        </StackPanel>
+                    </Grid>
+                </StackPanel>
+            </StackPanel>
+            </Grid>
+            </ScrollViewer>
+        </Grid>
+
+        <!-- ============================================================ idle screen
+             After a while with nothing touched (Settings, Screen saver): everything else is put away and a sleepy
+             "Z z z" sits still over the backdrop. Any input wakes it, through a short "waking up" while the app is
+             laid out again. See MainWindow.Idle.cs. -->
+        <Grid x:Name="IdleScreen" Visibility="Collapsed" Opacity="0" Background="#99000000" Cursor="None">
+            <Grid x:Name="IdleContent" HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel x:Name="IdleSleep">
+                    <Canvas Width="220" Height="150" HorizontalAlignment="Center">
+                        <TextBlock x:Name="IdleZ1" Text="Z" FontSize="74" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" Foreground="White" Opacity="0.9" Canvas.Left="40" Canvas.Top="58" />
+                        <TextBlock x:Name="IdleZ2" Text="z" FontSize="52" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" Foreground="White" Opacity="0.7" Canvas.Left="100" Canvas.Top="34" />
+                        <TextBlock x:Name="IdleZ3" Text="z" FontSize="36" FontWeight="Black" FontFamily="Segoe UI Black, Segoe UI" Foreground="White" Opacity="0.5" Canvas.Left="146" Canvas.Top="14" />
+                    </Canvas>
+                    <TextBlock x:Name="IdleClock" FontSize="76" FontWeight="Bold" FontFamily="Segoe UI Variable Display, Segoe UI" Foreground="White"
+                               HorizontalAlignment="Center" Margin="0,18,0,0" />
+                    <TextBlock FontSize="16" Foreground="#C8FFFFFF" HorizontalAlignment="Center" Margin="0,6,0,0" TextTrimming="CharacterEllipsis" MaxWidth="560"
+                               Visibility="{Binding CurrentTrack, Converter={StaticResource NullToVis}}">
+                        <Run Text="{Binding CurrentTrack.Title, Mode=OneWay}" FontWeight="SemiBold" />
+                        <Run Text="  &#xB7;  " Foreground="#80FFFFFF" />
+                        <Run Text="{Binding CurrentTrack.Artist, Mode=OneWay}" />
+                    </TextBlock>
+                    <TextBlock Text="Move the mouse or press a key to wake up" FontSize="12.5" Foreground="#80FFFFFF" HorizontalAlignment="Center" Margin="0,34,0,0" />
+                </StackPanel>
+                <!-- waking up: shown while the tabs are laid out again -->
+                <StackPanel x:Name="IdleWake" Opacity="0" Visibility="Collapsed" VerticalAlignment="Center">
+                    <local:LoadingDots DotSize="12" Fill="White" HorizontalAlignment="Center" />
+                    <TextBlock Text="Waking up&#x2026;" FontSize="18" FontWeight="SemiBold" Foreground="White" HorizontalAlignment="Center" Margin="0,16,0,0" />
+                </StackPanel>
+            </Grid>
+        </Grid>
     </Grid>
 </Window>

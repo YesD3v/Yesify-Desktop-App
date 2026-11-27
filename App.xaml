@@ -67,9 +67,30 @@
 
             <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
+            <!-- "Liquid glass" display text (Home's landing stats): white that thins toward the bottom, with a soft glow. -->
+            <Style x:Key="GlassText" TargetType="TextBlock">
+                <Setter Property="Foreground">
+                    <Setter.Value>
+                        <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                            <GradientStop Color="#FFFFFFFF" Offset="0" />
+                            <GradientStop Color="#F0FFFFFF" Offset="0.5" />
+                            <GradientStop Color="#B8FFFFFF" Offset="1" />
+                        </LinearGradientBrush>
+                    </Setter.Value>
+                </Setter>
+                <Setter Property="Effect">
+                    <Setter.Value>
+                        <DropShadowEffect Color="White" ShadowDepth="0" BlurRadius="28" Opacity="0.3" RenderingBias="Performance" />
+                    </Setter.Value>
+                </Setter>
+                <!-- No cache here: an effect on a cached element is still redrawn every frame. Cache what holds
+                     the text instead (Home's landing page does), so the glow is kept in the picture. -->
+            </Style>
+
             <!-- Converters -->
             <local:BoolToVisibilityConverter x:Key="BoolToVis" />
             <local:BoolToVisibilityConverter x:Key="InvBoolToVis" Invert="True" />
+            <local:BoolToVisibilityConverter x:Key="BoolToHidden" KeepLayout="True" />
             <local:NullToVisibilityConverter x:Key="NullToVis" />
             <local:NullToVisibilityConverter x:Key="InvNullToVis" Invert="True" />
             <local:PlayGlyphConverter x:Key="PlayGlyph" />

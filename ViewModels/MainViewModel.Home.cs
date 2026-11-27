@@ -12,6 +12,7 @@ public sealed partial class MainViewModel
     private const string HomeFile = "home.json";
 
     private readonly ListeningHistory _listening = new();
+    private readonly NotInterestedService _notInterested = new();
     private readonly SpotifyArtistService _artists = new();
     private Recommender? _recommender;
     private CancellationTokenSource? _homeCts;
@@ -48,6 +49,7 @@ public sealed partial class MainViewModel
         ViewImageUrl = null;
         CurrentView = ViewMode.Home;
         OnPropertyChanged(nameof(Greeting));
+        OnStatsChanged();
         // A new day means new mixes.
         if (!IsHomeBuilding && (HomeSections.Count == 0 || _homeBuiltUtc.ToLocalTime().Date != DateTime.Now.Date)) _ = BuildHomeAsync(DaySeed());
     }
@@ -79,7 +81,8 @@ public sealed partial class MainViewModel
             var history = _listening.Events.ToList();
             var liked = _liked.Tracks.ToList();
             var library = _library.AllTracks([]).ToList();
-            var home = await Task.Run(() => _recommender.BuildAsync(history, liked, library, seed, cts.Token), cts.Token);
+            var not = _notInterested.Snapshot();
+            var home = await Task.Run(() => _recommender.BuildAsync(history, liked, library, seed, cts.Token, not), cts.Token);
 
             // Popular songs past an artist's top five come without covers; fill them in before showing.
             var songs = home.Sections.SelectMany(s => s.Items).SelectMany(i => i.Tracks ?? []).Distinct().ToList();
@@ -89,6 +92,8 @@ public sealed partial class MainViewModel
                 if (item.Kind == HomeItemKind.Track && item.Tracks != null) item.ImageUrl = item.Tracks[item.Index].ImageUrl;
                 else if (item.ImageUrl == null) item.ImageUrl = item.Tracks?.Select(t => t.ImageUrl).FirstOrDefault(u => u != null);
             }
+
+            await AddCommunityPlaylistsAsync(home, cts.Token);
 
             if (cts.IsCancellationRequested) return;
             ShowHomeData(home);
@@ -108,6 +113,39 @@ public sealed partial class MainViewModel
                     HomeStatus = "Play or like a few songs (or import a playlist) and Home fills up with mixes and songs picked for you.";
             }
         }
+    }
+
+    /// <summary>
+    /// "Community playlists for you": playlists YouTube Music listeners made around your top artists, a few
+    /// per artist, after the songs picked for you. Left out quietly if YouTube Music doesn't answer.
+    /// </summary>
+    private async Task AddCommunityPlaylistsAsync(HomeData home, CancellationToken ct)
+    {
+        var artists = home.Sections.FirstOrDefault(s => s.Title == "Your top artists")?.Items.Select(i => i.Title).Take(4).ToList()
+                      ?? _liked.Tracks.Select(t => t.PrimaryArtist).Where(a => a.Length > 0).GroupBy(a => a, StringComparer.OrdinalIgnoreCase)
+                          .OrderByDescending(g => g.Count()).Select(g => g.Key).Take(4).ToList();
+        if (artists.Count == 0) return;
+        try
+        {
+            var found = await Task.WhenAll(artists.Select(a => _music.CommunityPlaylistsAsync(a, ct, 6)));
+            var not = _notInterested.Snapshot();
+            var picks = new List<HomeItem>();
+            for (var round = 0; round < 6 && picks.Count < 14; round++) // one from each artist in turn
+                foreach (var list in found)
+                    if (round < list.Count && picks.All(p => p.Id != list[round].Id) && !not.Items.Contains(NotInterestedService.ItemKey(list[round])))
+                        picks.Add(list[round]);
+            if (picks.Count < 4) return;
+            var section = new HomeSection
+            {
+                Title = "Community playlists for you",
+                Subtitle = "Made by fans of " + string.Join(", ", artists.Take(3)),
+                Items = picks.Take(14).ToList(),
+            };
+            var after = home.Sections.FindIndex(s => s.Title == "Songs you might like");
+            home.Sections.Insert(after >= 0 ? after + 1 : Math.Min(1, home.Sections.Count), section);
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { /* Home without it */ }
     }
 
     private void ShowHomeData(HomeData home)
@@ -232,8 +270,143 @@ public sealed partial class MainViewModel
     {
         if (_listenTrack is not { } track) return;
         _listenTrack = null;
-        if (_player.HasTrack) _listening.Record(track, _player.Position, _player.Duration);
+        if (_player.HasTrack)
+        {
+            _listening.Record(track, _player.Position, _player.Duration);
+            OnStatsChanged();
+        }
     }
+
+    // ---------------------------------------------------------------- not interested
+
+    public bool HasNotInterested => _notInterested.Count > 0;
+
+    public string NotInterestedSummary => _notInterested.Count == 0
+        ? "Right-click a song, mix, album or artist and pick Not Interested to keep it out of Home's picks"
+        : $"{_notInterested.Count:N0} {(_notInterested.Count == 1 ? "thing" : "things")} kept out of Home's picks (Discover Mix, Daily Mixes, songs and artists you might like)";
+
+    public bool IsNotInterested(Track t) => _notInterested.Has(t);
+
+    /// <summary>
+    /// "Not Interested" on a song: it's left out of Home's recommendations from now on, and counts a little
+    /// against its artist. It disappears from the picks on Home right away.
+    /// </summary>
+    public void NotInterested(Track track)
+    {
+        _notInterested.Add(track);
+        var key = NotInterestedService.TitleKey(track.Title, track.Artist);
+        bool Matches(Track t) => t.Key == track.Key || NotInterestedService.TitleKey(t.Title, t.Artist) == key;
+        DropFromHome(item => item.Kind == HomeItemKind.Track && item.Tracks != null && item.Index < item.Tracks.Count && Matches(item.Tracks[item.Index]),
+                     mixes: tracks => tracks.RemoveAll(Matches) > 0);
+        StatusText = $"Got it. “{track.Title}” won't be recommended to you again.";
+        OnNotInterestedChanged();
+    }
+
+    /// <summary>"Not Interested" on a Home tile (a mix, album, playlist or artist): it's taken off Home for good.</summary>
+    public void NotInterested(HomeItem item)
+    {
+        _notInterested.Add(item);
+        var artist = item.Kind is HomeItemKind.Artist or HomeItemKind.MusicArtist ? item.Title : null;
+        bool ByArtist(Track t) => artist != null && t.Artist.Split(',')[0].Trim().Equals(artist, StringComparison.OrdinalIgnoreCase);
+        var key = NotInterestedService.ItemKey(item);
+        DropFromHome(i => ReferenceEquals(i, item) || NotInterestedService.ItemKey(i) == key
+                          || i.Kind == HomeItemKind.Track && i.Tracks != null && i.Index < i.Tracks.Count && ByArtist(i.Tracks[i.Index]),
+                     mixes: artist == null ? null : tracks => tracks.RemoveAll(ByArtist) > 0);
+        StatusText = artist != null ? $"Got it. You'll see less of {artist} on Home." : $"Got it. “{item.Title}” won't show up on Home again.";
+        OnNotInterestedChanged();
+    }
+
+    /// <summary>Takes matching tiles off Home (rebuilding only the rows that change) and saves it.</summary>
+    private void DropFromHome(Func<HomeItem, bool> tile, Func<List<Track>, bool>? mixes)
+    {
+        for (var i = 0; i < HomeSections.Count; i++)
+        {
+            var section = HomeSections[i];
+            if (section.Title == "Recently played") continue;
+            var keep = section.Items.Where(item => !tile(item)).ToList();
+            var changed = keep.Count != section.Items.Count;
+            if (mixes != null)
+                foreach (var mix in keep.Where(x => x.Kind == HomeItemKind.Mix && x.Tracks != null))
+                    changed |= mixes(mix.Tracks!);
+            if (!changed) continue;
+            if (keep.Count == 0)
+            {
+                HomeSections.RemoveAt(i--);
+                continue;
+            }
+            // Song tiles carry their row (so playing continues through it): point them at the new row.
+            var songs = keep.Where(x => x.Kind == HomeItemKind.Track && x.Tracks != null && x.Index < x.Tracks.Count).Select(x => x.Tracks![x.Index]).ToList();
+            var rebuilt = keep.Select(x => x.Kind == HomeItemKind.Track && x.Tracks != null && x.Index < x.Tracks.Count
+                ? new HomeItem { Kind = x.Kind, Title = x.Title, Subtitle = x.Subtitle, ImageUrl = x.ImageUrl, Id = x.Id, Tracks = songs, Index = songs.IndexOf(x.Tracks[x.Index]) }
+                : x).ToList();
+            HomeSections[i] = new HomeSection { Title = section.Title, Subtitle = section.Subtitle, Items = rebuilt, MoreId = section.MoreId, MoreParams = section.MoreParams, Wrap = section.Wrap };
+        }
+        var data = new HomeData { BuiltUtc = _homeBuiltUtc, Sections = HomeSections.ToList() };
+        try { Storage.Save(HomeFile, data); } catch { /* still off Home for now */ }
+    }
+
+    private void OnNotInterestedChanged()
+    {
+        OnPropertyChanged(nameof(HasNotInterested));
+        OnPropertyChanged(nameof(NotInterestedSummary));
+    }
+
+    [RelayCommand]
+    private void ClearNotInterested()
+    {
+        _notInterested.Clear();
+        OnNotInterestedChanged();
+        StatusText = "Not Interested reset. Home can recommend everything again.";
+        _ = BuildHomeAsync(DaySeed());
+    }
+
+    // ---------------------------------------------------------------- landing page stats
+
+    public bool HasListeningStats => _listening.Stats.Songs.Count > 0;
+
+    /// <summary>"1,284 songs"</summary>
+    public string StatsSongsText => _listening.Stats.Songs.Count == 1 ? "1 song" : $"{_listening.Stats.Songs.Count:N0} songs";
+
+    /// <summary>"86h of music" (minutes while it's under an hour).</summary>
+    public string StatsHoursText
+    {
+        get
+        {
+            var h = _listening.Stats.Seconds / 3600;
+            if (h < 1) return $"{Math.Max(0, (int)Math.Round(h * 60))} min of music";
+            return h < 10 ? $"{h:0.#}h of music" : $"{h:N0}h of music";
+        }
+    }
+
+    /// <summary>Since when, how many plays, and who you've been playing most lately.</summary>
+    public string StatsDetail
+    {
+        get
+        {
+            var stats = _listening.Stats;
+            if (stats.Songs.Count == 0) return "Play something and your listening adds up here.";
+            var parts = new List<string> { $"Since {stats.Since.ToLocalTime():MMMM yyyy}", stats.Plays == 1 ? "1 play" : $"{stats.Plays:N0} plays" };
+            var month = DateTime.UtcNow.AddDays(-30);
+            var top = _listening.Events.Where(e => e.AtUtc >= month)
+                .GroupBy(e => e.Artist.Split(',')[0].Trim(), StringComparer.OrdinalIgnoreCase)
+                .Select(g => (Name: g.First().Artist.Split(',')[0].Trim(), Seconds: g.Sum(e => e.Seconds)))
+                .Where(a => a.Name.Length > 0)
+                .OrderByDescending(a => a.Seconds).FirstOrDefault();
+            if (top.Name != null) parts.Add($"On repeat: {top.Name}");
+            return string.Join("  ·  ", parts);
+        }
+    }
+
+    private void OnStatsChanged()
+    {
+        OnPropertyChanged(nameof(HasListeningStats));
+        OnPropertyChanged(nameof(StatsSongsText));
+        OnPropertyChanged(nameof(StatsHoursText));
+        OnPropertyChanged(nameof(StatsDetail));
+    }
+
+    /// <summary>The visualizer's levels: what's playing right now (false when nothing is).</summary>
+    public bool ReadSpectrum(float[] bands) => _player.ReadSpectrum(bands);
 
     [RelayCommand]
     private void ClearListeningHistory()

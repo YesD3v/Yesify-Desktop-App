@@ -49,6 +49,9 @@ public static class SmoothScroll
         glide.Wheel(e.Delta);
     }
 
+    /// <summary>Stops a glide in progress (something else is about to move the view).</summary>
+    public static void Halt(ScrollViewer sv) => ((Glide?)sv.GetValue(StateProperty))?.Stop();
+
     private static ScrollViewer? Viewer(DependencyObject d)
     {
         if (d is ScrollViewer sv) return sv;
@@ -98,7 +101,7 @@ public static class SmoothScroll
             CompositionTarget.Rendering += OnFrame;
         }
 
-        private void Stop()
+        public void Stop()
         {
             if (!_running) return;
             _running = false;

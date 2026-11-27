@@ -41,6 +41,9 @@ public sealed class MusicSearchResults
     public List<HomeItem> Artists { get; init; } = [];
     public List<HomeItem> Albums { get; init; } = [];
     public List<HomeItem> Playlists { get; init; } = [];
+
+    /// <summary>Playlists made by YouTube Music listeners (not by YouTube Music itself).</summary>
+    public List<HomeItem> CommunityPlaylists { get; init; } = [];
 }
 
 /// <summary>
@@ -106,12 +109,31 @@ public sealed partial class YouTubeMusicService
         var featured = Find(FeaturedPlaylistsFilter);
         var community = Find(CommunityPlaylistsFilter);
         await Task.WhenAll(artists, albums, featured, community);
+        var playlists = featured.Result.Where(i => i.Kind == HomeItemKind.MusicPlaylist).DistinctBy(i => i.Id).Take(16).ToList();
+        var taken = playlists.Select(i => i.Id).ToHashSet();
         return new MusicSearchResults
         {
             Artists = artists.Result.Where(i => i.Kind == HomeItemKind.MusicArtist).Take(12).ToList(),
             Albums = albums.Result.Where(i => i.Kind == HomeItemKind.MusicAlbum).Take(16).ToList(),
-            Playlists = featured.Result.Concat(community.Result).Where(i => i.Kind == HomeItemKind.MusicPlaylist).DistinctBy(i => i.Id).Take(16).ToList(),
+            Playlists = playlists,
+            CommunityPlaylists = community.Result.Where(i => i.Kind == HomeItemKind.MusicPlaylist && !taken.Contains(i.Id)).DistinctBy(i => i.Id).Take(20).ToList(),
         };
+    }
+
+    /// <summary>
+    /// Playlists YouTube Music listeners made around <paramref name="query"/> (an artist, a mood...), most
+    /// popular first. Empty if YouTube Music doesn't answer.
+    /// </summary>
+    public async Task<List<HomeItem>> CommunityPlaylistsAsync(string query, CancellationToken ct, int max = 20)
+    {
+        try
+        {
+            return ListItems(await PostAsync("search", new JsonObject { ["query"] = query, ["params"] = CommunityPlaylistsFilter }, ct))
+                .Select(ToItem).OfType<HomeItem>().Where(i => i.Kind == HomeItemKind.MusicPlaylist && i.Id != null)
+                .DistinctBy(i => i.Id).Take(max).ToList();
+        }
+        catch (OperationCanceledException) { throw; }
+        catch { return []; }
     }
 
     private static string Squash(string s) => new(s.ToLowerInvariant().Where(char.IsLetterOrDigit).ToArray());
@@ -152,6 +174,10 @@ public sealed partial class YouTubeMusicService
     public async Task<MusicPage> ArtistAsync(string channelId, CancellationToken ct)
     {
         var json = await BrowseRawAsync(channelId, null, ct);
+        // Fans' playlists of this artist, looked up by name once the page says who it is.
+        var community = Text((json?["header"]?["musicImmersiveHeaderRenderer"] ?? json?["header"]?["musicVisualHeaderRenderer"])?["title"]) is { Length: > 0 } who
+            ? CommunityPlaylistsAsync(who, ct, 16)
+            : Task.FromResult(new List<HomeItem>());
         var page = new MusicPage();
         var header = json?["header"]?["musicImmersiveHeaderRenderer"] ?? json?["header"]?["musicVisualHeaderRenderer"];
         page.Title = Text(header?["title"]);
@@ -173,6 +199,9 @@ public sealed partial class YouTubeMusicService
             break;
         }
         page.Sections.AddRange(Carousels(json));
+        var shown = page.Sections.SelectMany(s => s.Items).Select(i => i.Id).ToHashSet();
+        var fans = (await community).Where(i => !shown.Contains(i.Id)).ToList();
+        if (fans.Count > 0) page.Sections.Add(new HomeSection { Title = "Community playlists", Subtitle = "Made by listeners", Items = fans });
         return page;
     }
 

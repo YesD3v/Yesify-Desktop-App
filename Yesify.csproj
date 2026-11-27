@@ -28,6 +28,34 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Home's visualizer, drawn by the graphics card: compiled from Shaders/AudioRing.fx (see the commands there). -->
+    <Resource Include="Shaders\*.ps" />
+  </ItemGroup>
+
+  <!-- For the updater (Services/Updater.cs): the git commit a build comes from, and for builds from source
+       (not the published single-file exe) the folder to pull and rebuild in. -->
+  <Target Name="YesifyBuildInfo" BeforeTargets="GetAssemblyAttributes">
+    <Exec Command="git rev-parse HEAD" WorkingDirectory="$(MSBuildProjectDirectory)" ConsoleToMSBuild="true" EchoOff="true"
+          IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" StandardOutputImportance="low" StandardErrorImportance="low">
+      <Output TaskParameter="ConsoleOutput" PropertyName="_YesifyGitOutput" />
+      <Output TaskParameter="ExitCode" PropertyName="_YesifyGitExit" />
+    </Exec>
+    <PropertyGroup>
+      <_YesifyCommit Condition="'$(_YesifyGitExit)' == '0'">$(_YesifyGitOutput)</_YesifyCommit>
+    </PropertyGroup>
+    <ItemGroup>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute">
+        <_Parameter1>YesifyCommit</_Parameter1>
+        <_Parameter2>$(_YesifyCommit)</_Parameter2>
+      </AssemblyAttribute>
+      <AssemblyAttribute Include="System.Reflection.AssemblyMetadataAttribute" Condition="'$(PublishSingleFile)' != 'true'">
+        <_Parameter1>YesifyProjectDir</_Parameter1>
+        <_Parameter2>$(MSBuildProjectDirectory)</_Parameter2>
+      </AssemblyAttribute>
+    </ItemGroup>
+  </Target>
+
+  <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" Version="8.4.2" />
   </ItemGroup>
 

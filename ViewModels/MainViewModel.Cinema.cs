@@ -14,6 +14,12 @@ public sealed partial class MainViewModel
     [RelayCommand]
     private void ToggleCinema() => IsCinema = !IsCinema;
 
+    /// <summary>The queue isn't kept up to date behind cinema (skips stay light); it catches up on the way out.</summary>
+    partial void OnIsCinemaChanged(bool value)
+    {
+        if (!value) RefreshQueue();
+    }
+
     // ================================================================ library toolbar
 
     /// <summary>"All", "Playlists" or "Albums".</summary>

@@ -360,6 +360,8 @@ public sealed partial class MainViewModel
             (artistFirst ? ViewTopSections : ViewSections).Add(new HomeSection { Title = "Artists", Items = found.Artists });
         if (found.Albums.Count > 0) ViewSections.Add(new HomeSection { Title = "Albums", Items = found.Albums });
         if (found.Playlists.Count > 0) ViewSections.Add(new HomeSection { Title = "Playlists", Items = found.Playlists });
+        if (found.CommunityPlaylists.Count > 0)
+            ViewSections.Add(new HomeSection { Title = "Community playlists", Subtitle = "Made by YouTube Music listeners", Items = found.CommunityPlaylists });
     }
 
     // ================================================================ your playlists

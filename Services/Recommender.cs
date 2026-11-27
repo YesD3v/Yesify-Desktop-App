@@ -74,12 +74,19 @@ public sealed class Recommender(SpotifyArtistService spotify)
         public readonly HashSet<string> KnownArtists = new(StringComparer.OrdinalIgnoreCase);
         public readonly HashSet<string> KnownTracks = [];
         public readonly HashSet<string> KnownTitles = new(StringComparer.OrdinalIgnoreCase);
+
+        /// <summary>What you said you're not interested in (see <see cref="NotInterestedService"/>).</summary>
+        public NotInterestedService.Data Not = new();
+
+        public bool Rejected(Track t) =>
+            Not.Songs.Contains(t.Key) || Not.Songs.Contains(NotInterestedService.TitleKey(t.Title, t.Artist))
+            || Not.Artists.Contains(PrimaryArtist(t.Artist));
     }
 
     public async Task<HomeData> BuildAsync(IReadOnlyList<ListenEvent> history, IReadOnlyList<Track> liked, IReadOnlyList<Track> library,
-                                           int seed, CancellationToken ct)
+                                           int seed, CancellationToken ct, NotInterestedService.Data? notInterested = null)
     {
-        var taste = MeasureTaste(history, liked, library);
+        var taste = MeasureTaste(history, liked, library, notInterested ?? new());
         var rng = new Random(seed);
         var sections = new List<HomeSection>();
 
@@ -105,7 +112,7 @@ public sealed class Recommender(SpotifyArtistService spotify)
 
         var seedIds = seeds.Select(s => s.Id).ToHashSet();
         var newArtists = scores
-            .Where(s => !seedIds.Contains(s.Key) && spotify.Cached(s.Key) is { } p && !taste.KnownArtists.Contains(p.Name))
+            .Where(s => !seedIds.Contains(s.Key) && spotify.Cached(s.Key) is { } p && !taste.KnownArtists.Contains(p.Name) && !taste.Not.Artists.Contains(p.Name))
             .OrderByDescending(s => s.Value)
             .Select(s => (Page: spotify.Cached(s.Key)!, Score: s.Value))
             .ToList();
@@ -184,14 +191,21 @@ public sealed class Recommender(SpotifyArtistService spotify)
         if (recent.Count > 0)
             sections.Add(new HomeSection { Title = "Recently played", Items = recent.Select((t, i) => TrackItem(t, recent, i)).ToList() });
 
+        // Tiles you turned down stay off Home (what you played recently is history, so it stays).
+        foreach (var section in sections.Where(s => s.Title != "Recently played"))
+            section.Items.RemoveAll(i => taste.Not.Items.Contains(NotInterestedService.ItemKey(i))
+                                         || i.Kind == HomeItemKind.Artist && taste.Not.Artists.Contains(i.Title)
+                                         || i.Kind == HomeItemKind.Track && i.Tracks != null && i.Index < i.Tracks.Count && taste.Rejected(i.Tracks[i.Index]));
+        sections.RemoveAll(s => s.Items.Count == 0);
         return new HomeData { BuiltUtc = DateTime.UtcNow, Sections = sections };
     }
 
     // ================================================================ taste
 
-    private static Taste MeasureTaste(IReadOnlyList<ListenEvent> history, IReadOnlyList<Track> liked, IReadOnlyList<Track> library)
+    private static Taste MeasureTaste(IReadOnlyList<ListenEvent> history, IReadOnlyList<Track> liked, IReadOnlyList<Track> library,
+                                      NotInterestedService.Data notInterested)
     {
-        var taste = new Taste();
+        var taste = new Taste { Not = notInterested };
         var now = DateTime.UtcNow;
 
         void Credit(string artists, double weight)
@@ -233,6 +247,10 @@ public sealed class Recommender(SpotifyArtistService spotify)
             Credit(t.Artist, 0.1);
             Know(t);
         }
+        // Each song you turned down counts a little against its artist, and never comes back in a mix.
+        foreach (var a in notInterested.SongArtists) Credit(a, -0.6);
+        foreach (var key in taste.Tracks.Keys.ToList())
+            if (notInterested.Songs.Contains(key)) taste.Tracks[key] = -10;
         return taste;
     }
 
@@ -316,7 +334,9 @@ public sealed class Recommender(SpotifyArtistService spotify)
             {
                 var t = page.TopTracks[rank];
                 if (taste.KnownTracks.Contains("sp:" + t.Id) || taste.KnownTitles.Contains(TitleKey(t.Title, t.Artist))) continue;
-                candidates.Add((t.ToTrack(), score / max * Popularity(rank) * Jitter(rng)));
+                var track = t.ToTrack();
+                if (taste.Rejected(track)) continue;
+                candidates.Add((track, score / max * Popularity(rank) * Jitter(rng)));
                 taken++;
             }
         }
@@ -345,7 +365,7 @@ public sealed class Recommender(SpotifyArtistService spotify)
 
             // Songs you know by these artists, the ones you play and like most first.
             var known = taste.TrackInfo.Values
-                .Where(t => SplitArtists(t.Artist).Any(names.Contains))
+                .Where(t => SplitArtists(t.Artist).Any(names.Contains) && !taste.Rejected(t))
                 .Select(t => (Track: t, Score: taste.Tracks.GetValueOrDefault(t.Key) + 0.2) )
                 .Where(x => x.Score > 0)
                 .OrderByDescending(x => x.Score * Jitter(rng))
@@ -362,6 +382,7 @@ public sealed class Recommender(SpotifyArtistService spotify)
                 .Where(x => !taste.KnownTracks.Contains("sp:" + x.t.Id))
                 .OrderByDescending(x => x.s * Jitter(rng))
                 .Select(x => x.t.ToTrack())
+                .Where(t => !taste.Rejected(t))
                 .Take(12)
                 .ToList();
 

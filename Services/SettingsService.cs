@@ -37,6 +37,8 @@ public sealed class Settings
     public string BackdropColor2 { get; set; } = "#0E0B22";
     public bool BackdropMotion { get; set; }
     public double BackdropMotionFps { get; set; } = 30;
+    // Idle screen: seconds without using Yesify before it rests on the "Z z z" screen; 0 = never.
+    public int IdleSeconds { get; set; } = 180;
 }
 
 /// <summary>Small JSON files under %APPDATA%\Yesify, written atomically so a crash can't corrupt them.</summary>
