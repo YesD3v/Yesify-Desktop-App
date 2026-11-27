@@ -163,10 +163,44 @@ public static class Updater
         if (doc == null) return null;
         var commits = doc.RootElement.EnumerateArray().ToList(); // newest first
         if (commits.Count == 0) return null;
+        // Newer commits, but maybe with the very same files (edits made here, then committed and pushed).
+        if (await SameSourceAsync(dir, Str(commits[0], "sha")!, ct)) return null;
         var count = commits.Count;
         return new UpdateInfo(UpdateKind.SourceZip, $"Yesify @ {Str(commits[0], "sha")![..7]}",
             $"{count}{(count == 50 ? "+" : "")} new commit{(count == 1 ? "" : "s")} on {branch}", CommitDate(commits[0]), 0,
             CommitNotes(commits), null, null, count, branch, local);
+    }
+
+    /// <summary>
+    /// Whether every file of a commit on GitHub is already here, byte for byte (git's blob hash, with Windows
+    /// line endings counted as the same file).
+    /// </summary>
+    private static async Task<bool> SameSourceAsync(string dir, string commit, CancellationToken ct)
+    {
+        using var doc = await GetJsonAsync($"{Api}/git/trees/{commit}?recursive=1", ct);
+        if (doc == null || Bool(doc.RootElement, "truncated")) return false;
+        var blobs = doc.RootElement.GetProperty("tree").EnumerateArray()
+            .Where(e => Str(e, "type") == "blob")
+            .Select(e => (Path: Str(e, "path")!, Sha: Str(e, "sha")!))
+            .ToList();
+        return await Task.Run(() => blobs.All(b =>
+        {
+            var file = Path.Combine(dir, b.Path.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(file)) return false;
+            var bytes = File.ReadAllBytes(file);
+            if (BlobSha(bytes) == b.Sha) return true;
+            var lf = Encoding.Latin1.GetBytes(Encoding.Latin1.GetString(bytes).Replace("\r\n", "\n"));
+            return lf.Length != bytes.Length && BlobSha(lf) == b.Sha;
+        }), ct);
+    }
+
+    private static string BlobSha(byte[] content)
+    {
+        var header = Encoding.ASCII.GetBytes($"blob {content.Length}\0");
+        using var sha = IncrementalHash.CreateHash(HashAlgorithmName.SHA1);
+        sha.AppendData(header);
+        sha.AppendData(content);
+        return Convert.ToHexString(sha.GetHashAndReset()).ToLowerInvariant();
     }
 
     private static DateTime LocalBuildTime() => File.GetLastWriteTimeUtc(typeof(Updater).Assembly.Location);
